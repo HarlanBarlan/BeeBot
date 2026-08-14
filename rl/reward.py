@@ -45,11 +45,37 @@ class MultiTimescaleReward:
     # change. Only fire penalty on TRUE stuck states.
     STALL_TIMEOUT_SEC = 180
 
+    # Potential-based reward shaping (Ng, Harada, Russell 1999).
+    # Φ(s) = pollen_fill × PBRS_SCALE
+    # F(s, a, s') = γ·Φ(s') - Φ(s)  is added to base reward per step
+    #
+    # Guarantees: optimal policy is unchanged (bot still ultimately optimizes
+    # for honey/hour), but the reward signal is DENSIFIED — every step of
+    # bag filling generates a small positive gradient toward flowers, and
+    # every step where bag drains without honey ticking up generates a small
+    # negative gradient. Fixes the "value function has no data to fit" problem
+    # that dominated pre-PBRS training.
+    #
+    # PBRS_GAMMA MUST equal PPO's gamma (default 0.99 in SB3) for the
+    # invariance theorem to hold. If PPO's gamma is ever changed, mirror it
+    # here.
+    #
+    # PBRS_SCALE choice: max Φ = 1.0 (when bag is full). Per-step F magnitudes
+    # during typical farming end up around ±0.01–0.05, comparable to the
+    # W_TICK × Δhoney × scale terms. Higher SCALE = stronger shaping (bot
+    # more aggressive about filling); lower = weaker (falls back to sparse
+    # honey signal). Start conservative.
+    PBRS_SCALE = 1.0
+    PBRS_GAMMA = 0.99
+
     def __init__(self):
         self.honey_history = deque(maxlen=36000)  # (ts, honey) pairs; ~1 hour at 10 FPS
         self.last_honey = None
         self.last_pollen_fill = None
         self.last_progress_ts = None
+        # Previous step's potential. None = "no prior potential this episode"
+        # so first step after reset gets F=0 (no phantom shaping spike).
+        self.last_potential = None
         self.total_reward_this_episode = 0.0
 
     def reset(self):
@@ -57,6 +83,10 @@ class MultiTimescaleReward:
         self.last_honey = None
         self.last_pollen_fill = None
         self.last_progress_ts = None
+        # Don't carry potential across artificial episode boundaries — first
+        # step of each new episode gets F=0 to avoid a spurious shaping spike
+        # from whatever the last-episode bag state happened to be.
+        self.last_potential = None
         self.total_reward_this_episode = 0.0
 
     def _honey_delta_over(self, seconds):
@@ -125,6 +155,17 @@ class MultiTimescaleReward:
         if pollen_fill is not None:
             self.last_pollen_fill = pollen_fill
 
+        # Potential-based shaping (see PBRS_SCALE / PBRS_GAMMA docstring above).
+        # Only compute when we have a fresh pollen reading — if OCR failed
+        # this tick, keep last_potential unchanged so the next valid reading
+        # doesn't see a phantom drop-to-zero.
+        pbrs_shaping = 0.0
+        if pollen_fill is not None:
+            current_potential = pollen_fill * self.PBRS_SCALE
+            if self.last_potential is not None:
+                pbrs_shaping = self.PBRS_GAMMA * current_potential - self.last_potential
+            self.last_potential = current_potential
+
         # Reward is blended; scale down absolute honey deltas so per-step
         # reward stays in a range PPO handles well (roughly [-1, +10])
         scale = 1e-4  # 10k honey ≈ +1 reward
@@ -133,6 +174,7 @@ class MultiTimescaleReward:
             + self.W_MINUTE * delta_minute * scale / 60
             + self.W_HOUR * delta_hour * scale / 3600
             + stall_pen
+            + pbrs_shaping
         )
 
         self.total_reward_this_episode += reward
