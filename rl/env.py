@@ -98,7 +98,11 @@ from roblox_window import get_roblox_region
 from robo_input import move_mouse
 from dataset import MODEL_INPUT_W, MODEL_INPUT_H, GAME_RELEVANT_KEYS
 from hud.reader import HudReader
-from hud.text_triggers import TextTriggers
+try:
+    from hud.text_triggers import TextTriggers
+    _text_triggers_available = True
+except ImportError:
+    _text_triggers_available = False
 from .reward import MultiTimescaleReward
 from .supervisor import ensure_bss_running, is_bss_loaded
 import pydirectinput
@@ -173,13 +177,16 @@ class BSSEnv(gym.Env):
 
         self._hud = HudReader()
         # Text-trigger popup dismissal — auto-escapes known dialogs so bot
-        # doesn't spend hours stuck in a quest screen
-        try:
-            self._text_triggers = TextTriggers()
-            print(f"[env] text triggers loaded ({len(self._text_triggers.rules)} rules)")
-        except Exception as e:
-            print(f"[env] text triggers disabled: {e}")
-            self._text_triggers = None
+        # doesn't spend hours stuck in a quest screen.
+        # Optional: if hud/text_triggers.py isn't present, feature is skipped.
+        self._text_triggers = None
+        if _text_triggers_available:
+            try:
+                self._text_triggers = TextTriggers()
+                print(f"[env] text triggers loaded ({len(self._text_triggers.rules)} rules)")
+            except Exception as e:
+                print(f"[env] text triggers disabled: {e}")
+                self._text_triggers = None
         self._last_text_trigger_check = 0.0
         self._reward = MultiTimescaleReward()
         self._held_keys = set()
