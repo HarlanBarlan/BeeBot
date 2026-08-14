@@ -124,6 +124,14 @@ TICK_HZ = 10
 TICK_SECONDS = 1.0 / TICK_HZ
 QUIT_KEY = "esc"
 
+# Hold this key to temporarily freeze the bot so you can drive manually.
+# While held: bot releases all keys/mouse, releases the cursor clip, and
+# skips action-apply. Training keeps running (rollout still collects the
+# capture, reward, and observation) — the bot just stops issuing inputs.
+# Useful for nudging the bot when it gets stuck somewhere unproductive,
+# without stopping/restarting the training session.
+PAUSE_KEY = "f8"
+
 # Rate-limit HUD OCR — it's the slowest thing per step (~100-500ms each read).
 # HUD state doesn't change that fast anyway. Every 10 steps = ~1 sec, plenty
 # for return-to-hive detection and reward tracking.
@@ -277,6 +285,8 @@ class BSSEnv(gym.Env):
         # Last OCR-read timestamps (for validity flags)
         self._last_pollen_read_ts = None
         self._last_honey_read_ts = None
+        # Manual-pause state (F8 hold) — tracked so we only print on transitions
+        self._paused = False
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -310,8 +320,24 @@ class BSSEnv(gym.Env):
         # Per-phase timing for diagnostics (printed every 100 steps)
         _t0 = time.time()
 
-        # Apply action
-        self._apply_action(action)
+        # Manual pause: hold PAUSE_KEY to freeze bot inputs so a human can
+        # nudge/reposition the character. Rollout keeps running (obs, reward,
+        # value estimates still collected) — the bot just isn't the one
+        # driving.
+        pause_held = kb_lib.is_pressed(PAUSE_KEY)
+        if pause_held and not self._paused:
+            print(f"[env t={self._step_count}] MANUAL PAUSE (holding {PAUSE_KEY.upper()}) — "
+                  f"bot released; drive manually")
+            self._paused = True
+            self._release_all()
+            release_cursor_clip()
+        elif not pause_held and self._paused:
+            print(f"[env t={self._step_count}] resuming bot control")
+            self._paused = False
+
+        # Apply action (skip while paused so user has full control)
+        if not self._paused:
+            self._apply_action(action)
         _t_action = time.time() - _t0
         _t0 = time.time()
 
@@ -354,8 +380,9 @@ class BSSEnv(gym.Env):
 
         # Re-apply cursor clip each step — Windows silently releases it on
         # focus changes (alt-tab, system notifications, Roblox internal
-        # window ops). Cheap to re-apply.
-        if self._region is not None:
+        # window ops). Cheap to re-apply. Skip while paused so the user's
+        # mouse can leave the Roblox window freely.
+        if self._region is not None and not self._paused:
             clip_cursor_to_region(self._region)
 
         reward = self._reward.compute(hud, obs_frame=obs)
@@ -382,7 +409,8 @@ class BSSEnv(gym.Env):
             self._stalled_since_step = self._step_count
         elif (self._step_count - self._stalled_since_step > STALL_STEPS_BEFORE_DIALOGUE_CLICK
               and self._step_count - self._last_rescue_click_step > DIALOGUE_CLICK_INTERVAL_STEPS
-              and self._region is not None):
+              and self._region is not None
+              and not self._paused):
             self._try_dialogue_rescue_click(obs=None)
             self._last_rescue_click_step = self._step_count
 
