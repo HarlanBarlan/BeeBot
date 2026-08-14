@@ -1,0 +1,18 @@
+{
+  "_schema_doc": "Text trigger rules for auto-dismissing popups and completing simple dialogs the bot gets stuck on. Each rule: match phrase (case-insensitive substring) + response action. Order matters — first match wins. Add rules as new stuck-states are discovered.",
+  "_actions_supported": {
+    "press_key": "Press a single keyboard key (e.g. 'esc', 'e', 'enter')",
+    "click_at_match": "Click the center of where the matched text was found",
+    "click_at": "Click at fixed pixel coords relative to Roblox window (params: {x, y})"
+  },
+  "triggers": [
+    {"phrase": "age verification", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 30},
+    {"phrase": "would you like to accept", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 5},
+    {"phrase": "chat with your friends", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 30},
+    {"phrase": "server closing", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 60},
+    {"phrase": "click to continue", "action": "click_at_match", "cooldown_sec": 3},
+    {"phrase": "press enter to continue", "action": "press_key", "params": {"key": "enter"}, "cooldown_sec": 3},
+    {"phrase": "press e to", "action": "press_key", "params": {"key": "e"}, "cooldown_sec": 3},
+    {"phrase": "reset character", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 60}
+  ]
+}

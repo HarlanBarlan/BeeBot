@@ -66,6 +66,15 @@ CURSOR_TOP_EXCLUSION_PX = 50
 CURSOR_BOTTOM_EXCLUSION_PX = 15
 CURSOR_SIDE_EXCLUSION_PX = 5
 
+# Cursor is INCREMENTAL (delta from current position), not absolute.
+# Reason: PPO's Gaussian policy over a Box space samples heavily into the
+# clamped bounds — with absolute cursor that pins the cursor at the edges
+# ~60% of the time. Delta encoding treats those extreme samples as "large
+# movement" instead of "sit at edge", which lets the cursor move through
+# the interior naturally.
+# 0.5 in the action = no movement this step; 0 or 1 = full-speed left/right (up/down).
+MAX_CURSOR_DELTA_PX = 80
+
 
 def clip_cursor_to_region(region):
     """Confine the OS cursor to Roblox's window, minus edge exclusion zones
@@ -89,6 +98,7 @@ from roblox_window import get_roblox_region
 from robo_input import move_mouse
 from dataset import MODEL_INPUT_W, MODEL_INPUT_H, GAME_RELEVANT_KEYS
 from hud.reader import HudReader
+from hud.text_triggers import TextTriggers
 from .reward import MultiTimescaleReward
 from .supervisor import ensure_bss_running, is_bss_loaded
 import pydirectinput
@@ -98,6 +108,10 @@ import keyboard as kb_lib
 # How often to check that BSS is still loaded (seconds). Every check is cheap
 # (window title lookup) so this can be frequent without overhead.
 BSS_HEALTH_CHECK_INTERVAL_SEC = 30.0
+
+# How often to run text triggers (OCR whole popup region). Full OCR takes
+# 100-400ms so we don't do it every step — every 5 sec is plenty for popups.
+TEXT_TRIGGER_INTERVAL_SEC = 5.0
 
 
 TICK_HZ = 10
@@ -158,6 +172,15 @@ class BSSEnv(gym.Env):
         self._sct = mss.MSS()      # always available as fallback
 
         self._hud = HudReader()
+        # Text-trigger popup dismissal — auto-escapes known dialogs so bot
+        # doesn't spend hours stuck in a quest screen
+        try:
+            self._text_triggers = TextTriggers()
+            print(f"[env] text triggers loaded ({len(self._text_triggers.rules)} rules)")
+        except Exception as e:
+            print(f"[env] text triggers disabled: {e}")
+            self._text_triggers = None
+        self._last_text_trigger_check = 0.0
         self._reward = MultiTimescaleReward()
         self._held_keys = set()
         self._held_mouse = set()
@@ -225,6 +248,19 @@ class BSSEnv(gym.Env):
         # Capture new observation and HUD (also refreshes self._region)
         obs, hud = self._capture()
         _t_capture = time.time() - _t0
+
+        # Text-trigger check (rate-limited — OCR is expensive)
+        if (self._text_triggers is not None
+                and self._region is not None
+                and now - self._last_text_trigger_check >= TEXT_TRIGGER_INTERVAL_SEC):
+            self._last_text_trigger_check = now
+            try:
+                # Reuse the last-captured raw frame if we have it
+                frame_for_ocr = getattr(self, "_last_captured_frame", None)
+                if frame_for_ocr is not None:
+                    self._text_triggers.check(frame_for_ocr, self._region)
+            except Exception as e:
+                print(f"[env] text trigger check failed: {e}")
 
         if self._step_count % 100 == 99:
             print(f"[timing] step {self._step_count}: action={_t_action*1000:.0f}ms "
@@ -369,21 +405,31 @@ class BSSEnv(gym.Env):
                 except Exception: pass
                 self._held_mouse.discard(mb)
 
-        # Cursor — clamp normalized coords to [0,1] so we never exceed
-        # the Roblox window even if PPO's Box action drifts slightly out
-        cx_norm = max(0.0, min(1.0, float(cursor[0])))
-        cy_norm = max(0.0, min(1.0, float(cursor[1])))
+        # Cursor as DELTA from current position (not absolute).
+        # cursor[i] in [0, 1]: 0.5 = no movement, extremes = full-speed shift.
         if self._region is not None:
-            cx = int(cx_norm * self._region["width"]) + self._region["left"]
-            cy = int(cy_norm * self._region["height"]) + self._region["top"]
-            # Enforce the same exclusion zones as clip_cursor_to_region so the
-            # cursor never lands on the title bar, top-bar dropdown trigger,
-            # or extreme edges
+            # Initialize cursor to window center on first step
+            if self._last_cursor is None:
+                cx = self._region["left"] + self._region["width"] // 2
+                cy = self._region["top"] + self._region["height"] // 2
+            else:
+                # Map [0,1] action to [-1,+1] delta scale, then to pixels
+                dx = (float(cursor[0]) - 0.5) * 2.0 * MAX_CURSOR_DELTA_PX
+                dy = (float(cursor[1]) - 0.5) * 2.0 * MAX_CURSOR_DELTA_PX
+                cx = self._last_cursor[0] + int(dx)
+                cy = self._last_cursor[1] + int(dy)
+
+            # Enforce exclusion zones — cursor never lands on title bar,
+            # top-bar dropdown trigger, or extreme edges. Deltas that would
+            # push out just get truncated at the boundary and the cursor
+            # will "bounce" back into the interior on the next step.
             cx = max(self._region["left"] + CURSOR_SIDE_EXCLUSION_PX,
                      min(self._region["left"] + self._region["width"] - CURSOR_SIDE_EXCLUSION_PX, cx))
             cy = max(self._region["top"] + CURSOR_TOP_EXCLUSION_PX,
                      min(self._region["top"] + self._region["height"] - CURSOR_BOTTOM_EXCLUSION_PX, cy))
-            if self._last_cursor is None or abs(cx - self._last_cursor[0]) + abs(cy - self._last_cursor[1]) >= 8:
+
+            # Only actually move if delta is meaningful (avoid jittery micro-moves)
+            if self._last_cursor is None or abs(cx - self._last_cursor[0]) + abs(cy - self._last_cursor[1]) >= 4:
                 move_mouse(cx, cy)
                 self._last_cursor = (cx, cy)
 
