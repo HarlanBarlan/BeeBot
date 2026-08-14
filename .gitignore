@@ -1,0 +1,46 @@
+# Virtual environments — machine-specific, rebuild via requirements.txt
+.venv/
+.venv-*/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Trained model checkpoints — big binaries, transfer separately (see PLAN.md)
+models/*.pt
+models/*.zip
+
+# Gameplay recording data — big, machine-generated, not source
+data/
+
+# Training logs
+logs/
+*.log
+
+# Path recordings — machine/user-specific
+bridges/paths/*.json
+
+# Snipped templates — technically source but easier to re-snip per machine
+# (uncomment if you want to include them)
+# !hud/probes/*.png
+# !bridges/probes/*.png
+
+# Debug outputs
+hud/probes/debug_*.png
+*.tmp
+
+# IDE / OS junk
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Anything with credentials or secrets — never commit
+.env
+*.pem
+*.key
+secrets/

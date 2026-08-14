@@ -1,0 +1,413 @@
+{
+  "_schema_version": 2,
+  "_schema_doc": "Hardcoded knowledge of known BSS items. Each entry: name, category, effect, usage, sources, trigger_conditions, priority, notes, confidence (high|medium|low). Loaded by item_db.py. VLM fallback (item_recognizer.py) fills in unknowns and appends. All numeric claims verified against Fandom wiki 2026-08-12.",
+
+  "items": {
+    "field_dice": {
+      "name": "Field Dice",
+      "category": "consumable",
+      "effect": {"type": "field_boost", "magnitude_percent": 100, "target": "random_unlocked_field", "stacks": 1, "duration_seconds": 900},
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["dapper_bear_quests", "planters", "events"],
+      "trigger_conditions": ["boost_session_open", "field_boost_missing_on_target_field"],
+      "priority": 8,
+      "confidence": "high",
+      "notes": "One random unlocked field, 15 min. Fire early in a boost session."
+    },
+    "smooth_dice": {
+      "name": "Smooth Dice",
+      "category": "consumable",
+      "effect": {"type": "field_boost", "magnitude_percent": 200, "target": "two_random_fields", "stacks": 2, "duration_seconds": 900},
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["quest_milestones", "petal_planter", "pumpkin_planter"],
+      "trigger_conditions": ["boost_session_open"],
+      "priority": 9,
+      "confidence": "high",
+      "notes": "Two fields, +200% (2 stacks each), 15 min. Reapply refreshes."
+    },
+    "loaded_dice": {
+      "name": "Loaded Dice",
+      "category": "consumable",
+      "effect": {"type": "field_boost", "magnitude_percent": 300, "target": "three_random_fields", "stacks": 3, "duration_seconds": 900, "current_field_bias_percent": 25, "current_field_guaranteed_at_n_uses": 4},
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["robo_bear_challenge", "retro_swarm", "blender_upgrade"],
+      "trigger_conditions": ["boost_session_open", "endgame_grind"],
+      "priority": 10,
+      "confidence": "high",
+      "notes": "3 fields, +300% each, 15 min. Current-field chance: 25%, +25% per subsequent use, guaranteed at 4th use."
+    },
+    "cloud_vial": {
+      "name": "Cloud Vial",
+      "category": "consumable",
+      "effect": {"type": "spawn_cloud", "on_field": "current", "cloud_buff": {"pollen_percent": 25, "pollen_percent_with_gifted_windy": 50, "boosts_flower_and_sprout_growth": true, "growth_speed_per_cloud_percent": 8, "growth_speed_cap_percent": 20}},
+      "usage": {"method": "hotbar_click", "consumable": true, "cap_held": 10, "max_clouds_per_field": 6},
+      "sources": ["wind_shrine_rewards", "cloud_entity_kills"],
+      "trigger_conditions": ["boost_session_open", "farming_active_field"],
+      "priority": 8,
+      "confidence": "high",
+      "notes": "Spawns cloud on current field (+25% pollen, 50% w/ Gifted Windy). Growth speed +8% per cloud, capped at +20% total per field. Cap 6 CLOUDS per field simultaneously (not 10 — 10 is inventory cap). Also donated at Wind Shrine to roll Windy Bee."
+    },
+    "micro_converter": {
+      "name": "Micro-Converter",
+      "category": "consumable",
+      "effect": {"type": "instant_bag_convert"},
+      "usage": {"method": "hotbar_click", "consumable": true, "cooldown_seconds": 5, "cap_held": 15},
+      "sources": ["robo_bear_quests", "gifts", "events"],
+      "trigger_conditions": ["pollen_bag_near_full_far_from_hive"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "5s cooldown, cap 15 held. Portable instant convert."
+    },
+    "enzymes": {
+      "name": "Enzymes",
+      "category": "consumable",
+      "effect": {"type": "buff", "instant_conversion_percent": 10, "convert_rate_multiplier": 1.25, "duration_seconds": 600},
+      "usage": {"method": "hotbar_click", "consumable": true, "reapply_replaces_no_stack": true},
+      "sources": ["rhino_beetles", "vicious_bee", "quests", "planters"],
+      "trigger_conditions": ["farming_intensive", "boost_session_open"],
+      "priority": 6,
+      "confidence": "high",
+      "notes": "Reapply resets timer, doesn't stack. Overridden by Super Smoothie."
+    },
+    "glue": {
+      "name": "Glue",
+      "category": "consumable",
+      "effect": {"type": "buff", "bee_gather_pollen_multiplier": 1.25, "tool_pollen_multiplier": 1.25, "duration_seconds": 600},
+      "usage": {"method": "hotbar_click", "consumable": true, "also_planter_modifier": true},
+      "sources": ["stump_snail_boss", "bees", "crafted"],
+      "trigger_conditions": ["planter_deploy", "farming_intensive"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "Self-use = x1.25 Bee Gather Pollen + x1.25 Tool Pollen, 10 min (NOT color-specific — wiki-corrected). Overridden by Purple Potion / Super Smoothie. Also planter modifier for +royal jelly."
+    },
+    "tropical_drink": {
+      "name": "Tropical Drink",
+      "category": "consumable",
+      "effect": {"type": "buff", "white_pollen_multiplier": 1.25, "crit_chance_percent": 5, "instant_conversion_percent": 10, "duration_seconds": 600},
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["coconut_crab_boss", "coconut_field", "blender"],
+      "trigger_conditions": ["farming_white_field"],
+      "priority": 6,
+      "confidence": "high",
+      "notes": "x1.25 White Pollen + 5% crit + 10% IC, 10 min. Wiki-corrected — previously wrongly listed as red+white boost 15 min. Blender: Pineapple + Coconut. Also Super Smoothie ingredient."
+    },
+    "super_smoothie": {
+      "name": "Super Smoothie",
+      "category": "consumable",
+      "effect": {"type": "buff_stack",
+        "capacity_multiplier": 1.5,
+        "red_pollen_multiplier": 1.6, "blue_pollen_multiplier": 1.6, "white_pollen_multiplier": 1.6,
+        "bee_gather_pollen_multiplier": 1.4, "tool_pollen_multiplier": 1.4,
+        "convert_rate_multiplier": 1.5, "convert_rate_at_hive_multiplier": 1.5,
+        "instant_conversion_percent": 20,
+        "super_crit_chance_percent": 1, "crit_chance_percent": 6,
+        "bee_movespeed_multiplier": 1.25, "player_movespeed_multiplier": 1.25,
+        "duration_seconds": 1200
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["blender_recipe"],
+      "trigger_conditions": ["boost_session_open"],
+      "priority": 10,
+      "confidence": "high",
+      "notes": "20 min mega buff. Blender: 3 Neonberry + 3 Star Jelly + 3 Purple Potion + 6 Tropical Drink. Endgame boost centerpiece. Wiki-updated with tool pollen + convert-at-hive + super-crit + movespeed additions."
+    },
+    "purple_potion": {
+      "name": "Purple Potion",
+      "category": "consumable",
+      "effect": {"type": "buff_stack",
+        "capacity_multiplier": 1.25,
+        "red_pollen_multiplier": 1.5, "blue_pollen_multiplier": 1.5,
+        "bee_gather_pollen_multiplier": 1.3, "tool_pollen_multiplier": 1.3,
+        "convert_rate_at_hive_multiplier": 1.25,
+        "duration_seconds": 900
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["quest_rewards", "blender"],
+      "trigger_conditions": ["boost_session_open"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "Overrides Red/Blue Extract & Glue buffs. Super Smoothie ingredient. Wiki-updated with tool pollen + convert-at-hive."
+    },
+    "blue_extract": {
+      "name": "Blue Extract",
+      "category": "consumable",
+      "effect": {"type": "buff", "blue_pollen_multiplier": 1.25, "duration_seconds": 600},
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["blue_hq", "bucko_bee_quests", "blender"],
+      "trigger_conditions": ["farming_blue_field"],
+      "priority": 5,
+      "confidence": "high",
+      "notes": "Renamed from 'Blue Potion' — actual game name is 'Blue Extract'. x1.25 Blue Pollen, 10 min. Overridden by Purple Potion / Super Smoothie."
+    },
+    "red_extract": {
+      "name": "Red Extract",
+      "category": "consumable",
+      "effect": {"type": "buff", "red_pollen_multiplier": 1.25, "duration_seconds": 600},
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["red_hq", "riley_bee_quests", "blender"],
+      "trigger_conditions": ["farming_red_field"],
+      "priority": 5,
+      "confidence": "high",
+      "notes": "Renamed from 'Red Potion' — actual game name is 'Red Extract'. x1.25 Red Pollen, 10 min. Overridden by Purple Potion / Super Smoothie."
+    },
+
+    "refreshing_vial": {
+      "name": "Refreshing Vial",
+      "category": "consumable",
+      "effect": {"type": "grant_nectar", "nectar": "refreshing", "hours": 4,
+        "scaling_by_hours_remaining": {
+          "blue_convert_rate_multiplier_range": [1.1, 2.0],
+          "unique_instant_conversion_percent_range": [5, 20],
+          "hpp_multiplier_range": [1.01, 1.05]
+        }
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["refreshing_flowers", "planters"],
+      "trigger_conditions": ["boost_session_open", "blue_hive_active"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "Refreshing scales by hours remaining (fresh = max buff, decays linearly). Wiki-corrected — previous flat stats were wrong."
+    },
+    "comforting_vial": {
+      "name": "Comforting Vial",
+      "category": "consumable",
+      "effect": {"type": "grant_nectar", "nectar": "comforting", "hours": 4,
+        "scaling_by_hours_remaining": {
+          "blue_pollen": "scales",
+          "convert_rate_at_hive": "scales",
+          "crit_chance": "scales"
+        }
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["comforting_flowers", "planters"],
+      "trigger_conditions": ["boost_session_open", "blue_hive_active"],
+      "priority": 7,
+      "confidence": "medium",
+      "notes": "Blue Pollen / Convert Rate at Hive / Crit Chance scaling — exact ranges unverified. Wiki-corrected from prior wrong values."
+    },
+    "satisfying_vial": {
+      "name": "Satisfying Vial",
+      "category": "consumable",
+      "effect": {"type": "grant_nectar", "nectar": "satisfying", "hours": 4,
+        "scaling_by_hours_remaining": {
+          "white_pollen_multiplier_range": [1.05, 1.5],
+          "red_pollen_multiplier_range": [1.05, 1.5],
+          "honey_at_hive_multiplier_range": [1.05, 1.5],
+          "convert_rate_at_hive_multiplier_range": [1.1, 2.0],
+          "red_colorless_convert_rate_multiplier_range": [1.1, 2.0],
+          "unique_instant_conversion_percent_range": [5, 20]
+        }
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["satisfying_flowers", "planters"],
+      "trigger_conditions": ["boost_session_open", "white_hive_active"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "Best for white/red hives. Wiki-corrected — previous 'x1.15 honey from tokens / +5% loot luck' was wrong."
+    },
+    "invigorating_vial": {
+      "name": "Invigorating Vial",
+      "category": "consumable",
+      "effect": {"type": "grant_nectar", "nectar": "invigorating", "hours": 4,
+        "scaling_by_hours_remaining": {
+          "red_pollen_multiplier_range": [1.05, 1.5],
+          "blue_pollen_multiplier_range": [1.05, 1.5],
+          "convert_rate_multiplier_range": [1.05, 1.5],
+          "bee_ability_rate_percent_range": [1, 5],
+          "bee_attack_multiplier_range": [1.02, 1.1]
+        }
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["invigorating_flowers", "planters"],
+      "trigger_conditions": ["boost_session_open", "red_hive_active"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "Wiki-corrected — earlier '+10% bee attack, +5% crit' was wrong."
+    },
+    "motivating_vial": {
+      "name": "Motivating Vial",
+      "category": "consumable",
+      "effect": {"type": "grant_nectar", "nectar": "motivating", "hours": 4,
+        "scaling_by_hours_remaining": {
+          "blue_pollen": "scales",
+          "convert_rate": "scales",
+          "bee_ability_rate": "scales"
+        }
+      },
+      "usage": {"method": "hotbar_click", "consumable": true},
+      "sources": ["motivating_flowers", "planters"],
+      "trigger_conditions": ["boost_session_open"],
+      "priority": 6,
+      "confidence": "medium",
+      "notes": "Wiki-corrected — NOT movespeed/quest honey. Blue Pollen / Convert Rate / Bee Ability Rate scaling; exact ranges partial."
+    },
+
+    "star_treat": {
+      "name": "Star Treat",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "gifts_bee": true, "bond_xp": 1000},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["ticket_tent_1000t", "onett_quests", "spirit_bear", "bee_bear_catalog_10k_snowflakes", "extreme_memory_match", "mondo_chick_rare", "coconut_crab_rare", "commando_chick_100th", "mythic_meteors"],
+      "trigger_conditions": ["strategic_experimentation"],
+      "priority": 3,
+      "confidence": "high",
+      "notes": "IRREVERSIBLE — instantly gifts a bee AND grants +1000 bond. Strategy call — DO NOT auto-use."
+    },
+    "sunflower_seed": {
+      "name": "Sunflower Seed",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp_base": 25, "bond_xp_favored": 50, "favored_bees": ["Basic", "Bomber", "Looker", "Demo", "Commander", "Carpenter", "Ninja", "Vector", "Precise"]},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["sunflower_field_drops", "quests"],
+      "trigger_conditions": ["bond_farm_active", "bee_below_target_level"],
+      "priority": 4,
+      "confidence": "high",
+      "notes": "25 base / 50 for favored bees (listed). Wiki-corrected: NOT from Treat Dispenser or Basic Shop as previously listed."
+    },
+    "blueberry": {
+      "name": "Blueberry",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp_base": 25, "bond_xp_favored": 50, "favored_bees": ["Bumble", "Cool", "Bubble", "Frosty", "Bucko", "Diamond", "Music", "Tadpole", "Buoyant"]},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["blue_flower_field", "blue_hq", "quests"],
+      "trigger_conditions": ["bond_farm_blue_bee"],
+      "priority": 5,
+      "confidence": "high",
+      "notes": "25 base / 50 favored blue bees (listed)."
+    },
+    "strawberry": {
+      "name": "Strawberry",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp_base": 25, "bond_xp_favored": 50, "favored_bees": ["Rascal", "Rad", "Rage", "Riley", "Baby", "Stubborn", "Shy", "Spicy"]},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["strawberry_field", "red_hq"],
+      "trigger_conditions": ["bond_farm_red_bee"],
+      "priority": 5,
+      "confidence": "high",
+      "notes": "25 base / 50 favored red bees (listed)."
+    },
+    "pineapple": {
+      "name": "Pineapple",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp_base": 25, "bond_xp_favored": 50, "favored_bees": ["Hasty", "Brave", "Honey", "Exhausted", "Shocked", "Fire", "Demon", "Lion", "Fuzzy"]},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["pineapple_patch", "quests"],
+      "trigger_conditions": ["bond_farm_active"],
+      "priority": 5,
+      "confidence": "high",
+      "notes": "25 base / 50 favored (listed). Wiki-corrected — NOT a universal 50/bee."
+    },
+    "neonberry": {
+      "name": "Neonberry",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp": 500, "makes_bee_radioactive": true, "radioactive_duration_minutes": 11},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["ant_challenge", "wind_shrine", "blender"],
+      "trigger_conditions": ["bond_farm_high_value_bee"],
+      "priority": 8,
+      "confidence": "high",
+      "notes": "500 bond (wiki-corrected from 200) + makes bee radioactive 11 min (only treat with guaranteed radioactive). Super Smoothie ingredient — check stockpile before feeding."
+    },
+    "moon_charm": {
+      "name": "Moon Charm",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp": 250, "night_only_glowing_variant": true},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["night_fireflies", "night_sparkles", "moon_sprouts", "werewolf"],
+      "trigger_conditions": ["night_active", "bond_farm_active"],
+      "priority": 6,
+      "confidence": "high",
+      "notes": "250 bond (wiki-corrected from 100). Glowing variant at night. Used for Moon Amulet, Glitter, Helmet crafting."
+    },
+    "bitterberry": {
+      "name": "Bitterberry",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp": 100, "mutation_chance": 0.001, "mutation_chance_radioactive": 0.01},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["blue_hq", "quests"],
+      "trigger_conditions": ["strategic_experimentation"],
+      "priority": 3,
+      "confidence": "high",
+      "notes": "1/1000 mutation chance (1/100 on radioactive bees). Strategic use only."
+    },
+    "atomic_treat": {
+      "name": "Atomic Treat",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp": 1000, "gifts_bee": true, "guaranteed_mutation": true},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["mythic_meteors", "events_rare"],
+      "trigger_conditions": ["strategic_experimentation"],
+      "priority": 5,
+      "confidence": "high",
+      "notes": "Like Star Treat but ALSO guarantees a mutation. Very rare. Bot should use on high-value bees only."
+    },
+    "gingerbread_bear": {
+      "name": "Gingerbread Bear",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp": 250, "beesmas_only": true},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["bee_bear_beesmas", "stockings", "beesmas_events"],
+      "trigger_conditions": ["bond_farm_active", "beesmas_active"],
+      "priority": 6,
+      "confidence": "high",
+      "notes": "Beesmas only. 250 bond. Also boosts gift chance."
+    },
+    "aged_gingerbread_bear": {
+      "name": "Aged Gingerbread Bear",
+      "category": "treat",
+      "effect": {"type": "feed_bee", "bond_xp": 500, "beesmas_only": true, "elevated_gift_chance": true},
+      "usage": {"method": "hotbar_drag_to_bee", "consumable": true},
+      "sources": ["bee_bear_beesmas", "beesmas_rare"],
+      "trigger_conditions": ["bond_farm_active", "beesmas_active"],
+      "priority": 7,
+      "confidence": "high",
+      "notes": "Beesmas only. 500 bond. Higher gift chance than regular Gingerbread. One of few ways to gift event bees."
+    },
+
+    "royal_jelly": {
+      "name": "Royal Jelly",
+      "category": "jelly",
+      "effect": {"type": "reroll_or_upgrade_bee", "reroll_chances": {"rare_percent": 70, "epic_percent": 27, "legendary_percent": 3, "mythic_percent": 0.004}},
+      "usage": {"method": "hotbar_drag_to_hive_slot", "consumable": true},
+      "sources": ["royal_jelly_shop", "quests", "dispenser", "wind_shrine"],
+      "trigger_conditions": ["empty_hive_slot_and_stockpiled"],
+      "priority": 6,
+      "confidence": "high",
+      "notes": "Feed to empty slot for Rare 70% / Epic 27% / Legendary 3% / Mythic 0.004%. Or feed to existing bee for rarity roll."
+    },
+    "star_jelly": {
+      "name": "Star Jelly",
+      "category": "jelly",
+      "effect": {"type": "reroll_or_upgrade_bee", "gift_chance": 1.0, "never_gifts_basic": true, "uses_royal_jelly_rarity_odds": true},
+      "usage": {"method": "hotbar_drag_to_hive_slot", "consumable": true},
+      "sources": ["onett_quests", "spirit_bear", "panda_ant_loot", "mother_bear_late", "robux"],
+      "trigger_conditions": ["strategic_experimentation"],
+      "priority": 8,
+      "confidence": "high",
+      "notes": "**100% GUARANTEED gift** (wiki-corrected from 0.4% — that figure is the general gift chance from egg hatches/RJ, different thing). Uses Royal Jelly rarity odds (Rare 70% / Epic 27% / Legendary 3% / Mythic 0.004%) but ALWAYS gifts. Never gifts Basic Bee. Bumped priority significantly."
+    },
+
+    "wealth_clock_use": {
+      "name": "Wealth Clock (interact)",
+      "category": "world_interaction",
+      "effect": {"type": "grant_hpp_stack", "hpp_multiplier_gain": 1.01, "max_stacks": 5, "tickets_grant_progression": [1, 2, 3, 4, 5]},
+      "usage": {"method": "walk_to_and_press_E", "location_hint": "near_brown_bear_confidence_low"},
+      "sources": ["world_object"],
+      "trigger_conditions": ["daily_routine", "one_hour_played_since_last"],
+      "priority": 9,
+      "confidence": "high",
+      "notes": "+1% HPP per hour of playtime, max +5% (5 stacks). Tickets 1→5. Mechanics wiki-confirmed; location/gate requirement not wiki-confirmed."
+    },
+    "wind_shrine_offering": {
+      "name": "Wind Shrine Offering",
+      "category": "world_interaction",
+      "effect": {"type": "gamble_for_windy_bee", "requires_spirit_petal_first": true, "roll_material": "cloud_vials"},
+      "usage": {"method": "walk_to_and_press_E", "location": "past_35_bee_gate_near_pepper_patch"},
+      "sources": ["world_object"],
+      "trigger_conditions": ["strategic_experimentation"],
+      "priority": 2,
+      "confidence": "high",
+      "notes": "Only 1 of 3 Spirit Petals goes here (others for Petal Belt/Wand). After petal, donate Cloud Vials to roll Windy Bee Egg. DO NOT auto-donate."
+    }
+  }
+}

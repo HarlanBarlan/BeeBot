@@ -1,0 +1,145 @@
+{
+  "_schema_version": 1,
+  "_schema_doc": "Goal profiles for context-dependent reward shaping. Each goal is a strategic mode the scripted top-level planner can select (e.g. 'crafting_super_smoothie'). While that goal is active, item values are multiplied by the profile's `value_modifiers`. Missing items default to 1.0 (base value unchanged). Goals are activated by conditions the routine planner detects — HUD state, inventory levels, time of day.",
+
+  "goals": {
+    "default_farming": {
+      "description": "General farming with no specific goal — grab items at base value.",
+      "activation_hints": ["fallback_when_no_other_goal_matches"],
+      "value_modifiers": {}
+    },
+
+    "expanding_hive": {
+      "description": "Focus on growing bee count. Wants honey + jellies + eggs.",
+      "activation_hints": ["hive_slots_available >= 1", "under_target_bee_count"],
+      "value_modifiers": {
+        "royal_jelly": 3.0,
+        "star_jelly": 5.0,
+        "ticket": 2.5,
+        "honey_token": 1.5,
+        "sunflower_seed": 0.5,
+        "blueberry": 0.5,
+        "strawberry": 0.5,
+        "pineapple": 0.5,
+        "neonberry": 0.7,
+        "moon_charm_treat": 0.5
+      }
+    },
+
+    "bond_farming_target_bee": {
+      "description": "Actively leveling a specific bee. Treats and radioactive-making become primary.",
+      "activation_hints": ["target_bee_below_max_level", "user_selected_bond_target"],
+      "value_modifiers": {
+        "sunflower_seed": 3.0,
+        "blueberry": 3.0,
+        "strawberry": 3.0,
+        "pineapple": 3.0,
+        "neonberry": 5.0,
+        "moon_charm_treat": 3.0,
+        "royal_jelly": 0.3,
+        "star_jelly": 0.5
+      }
+    },
+
+    "crafting_super_smoothie": {
+      "description": "Building ingredients for a Super Smoothie (3 Neonberry + 3 Star Jelly + 3 Purple Potion + 6 Tropical Drink).",
+      "activation_hints": ["planned_boost_session_upcoming", "smoothie_stockpile_below_target"],
+      "value_modifiers": {
+        "neonberry": 10.0,
+        "star_jelly": 10.0,
+        "coconut": 5.0,
+        "pineapple": 5.0,
+        "royal_jelly": 0.5,
+        "honey_token": 0.7
+      }
+    },
+
+    "boost_session_active": {
+      "description": "In the middle of a 15-min boost. Ability tokens are king — grab them fast.",
+      "activation_hints": ["field_dice_or_smooth_dice_or_loaded_dice_recently_used", "super_smoothie_active"],
+      "value_modifiers": {
+        "haste": 5.0,
+        "focus": 3.0,
+        "boost_red": 5.0,
+        "boost_blue": 5.0,
+        "boost_white": 5.0,
+        "bomb": 3.0,
+        "mark": 5.0,
+        "baby_love": 10.0,
+        "inspire": 10.0,
+        "token_link": 8.0,
+        "honey_gift": 3.0,
+        "honey_token": 2.0
+      }
+    },
+
+    "boss_prep_and_fight": {
+      "description": "About to fight or fighting a boss. Combat buffs matter most.",
+      "activation_hints": ["boss_hp_bar_visible", "known_boss_respawn_imminent"],
+      "value_modifiers": {
+        "rage": 10.0,
+        "focus": 5.0,
+        "melody": 8.0,
+        "inspire": 5.0,
+        "haste": 3.0,
+        "bomb": 2.0,
+        "honey_token": 0.5
+      }
+    },
+
+    "daily_routine": {
+      "description": "Doing daily tasks — Wealth Clock, Memory Match, Mondo Chick, Ticket Tent visits.",
+      "activation_hints": ["dailies_not_yet_done_today"],
+      "value_modifiers": {
+        "ticket": 3.0,
+        "honey_gift": 2.0
+      }
+    },
+
+    "planter_cycle": {
+      "description": "Managing planters — placing, harvesting, applying glue/gumdrops.",
+      "activation_hints": ["planters_ready_to_harvest", "empty_planter_slot"],
+      "value_modifiers": {
+        "glue": 3.0,
+        "gumdrop": 2.0,
+        "glitter": 2.0,
+        "enzymes": 2.0
+      }
+    },
+
+    "beequip_upgrading": {
+      "description": "Applying waxes to beequips, farming wax mats.",
+      "activation_hints": ["beequip_wax_slots_open", "wax_stockpile_ready"],
+      "value_modifiers": {
+        "wax_soft": 3.0,
+        "wax_hard": 4.0,
+        "wax_caustic": 5.0,
+        "wax_swirled": 4.0,
+        "honey_token": 1.2
+      }
+    },
+
+    "night_activities": {
+      "description": "Night is active — Werewolf, Rogue Vicious Bee, Moon-related loot.",
+      "activation_hints": ["night_time_indicator_visible"],
+      "value_modifiers": {
+        "moon_charm": 4.0,
+        "moon_charm_treat": 4.0,
+        "stinger": 3.0
+      }
+    },
+
+    "endgame_grinding": {
+      "description": "Late game (35+ bees). Rare mats dominate — waxes, Star Jelly, endgame amulet farming.",
+      "activation_hints": ["bees_owned >= 35"],
+      "value_modifiers": {
+        "star_jelly": 5.0,
+        "royal_jelly": 0.5,
+        "wax_caustic": 8.0,
+        "wax_hard": 4.0,
+        "ticket": 4.0,
+        "honey_token": 0.8
+      }
+    }
+  }
+}

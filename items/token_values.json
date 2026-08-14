@@ -1,0 +1,98 @@
+{
+  "_schema_version": 1,
+  "_schema_doc": "Honey-equivalent values for reward shaping during RL. Each pickup/token type maps to how much a real player would trade for it. Used by the Phase 3a RL reward function: reward = Δhoney + sum(collected_items × values). Values are ROUGH — should be tuned per hive stage. Update when the bot progresses (Star Jelly is worth more at 15 bees than at 50 bees).",
+  "_stage_hint": "Values calibrated for early-to-mid game (~10-25 bees). At endgame, most values scale up 10-100x because your hive extracts more from each material.",
+
+  "world_pickups": {
+    "honey_token": {"value": 1.0, "confidence": "high",
+      "notes": "Baseline: 1 honey token = 1 honey. Direct."},
+    "pollen_puff": {"value": 0.5, "confidence": "medium",
+      "notes": "Small pollen from flowers. Half honey because still needs conversion at hive."},
+    "ticket": {"value": 50000, "confidence": "medium",
+      "notes": "Ticket ≈ what you'd spend to buy the smallest useful ticket item. Ticket Tent purchases scale broadly this range."},
+    "royal_jelly": {"value": 5000, "confidence": "medium",
+      "notes": "RJ Shop price scales 250k→1M each; usable value is ~5k early (feeds bees) to ~250k late-game."},
+    "star_jelly": {"value": 100000, "confidence": "medium",
+      "notes": "Rare. Contributes to Star Treats (25 SJ = 1 Star Treat). Bumped high to prioritize."},
+    "gumdrop": {"value": 200, "confidence": "medium",
+      "notes": "Gumdrop Shop trades 30 gumdrops for tickets; also feed bond XP; also planter modifier."},
+    "glitter": {"value": 500, "confidence": "medium",
+      "notes": "Crafting material — sprouts/planter enhancer."},
+    "oil": {"value": 300, "confidence": "medium",
+      "notes": "Crafting material — tool durability, planters."},
+    "enzymes": {"value": 200, "confidence": "medium",
+      "notes": "Both crafting and consumable buff (10 min IC+Convert)."},
+    "moon_charm": {"value": 800, "confidence": "medium",
+      "notes": "Night-only. Feeds bond, crafts Moon Amulet."},
+    "coconut": {"value": 400, "confidence": "medium",
+      "notes": "Treat + crafting (Tropical Drink)."},
+    "stinger": {"value": 300, "confidence": "medium",
+      "notes": "Rare crafting mat from Vicious Bee. Not super frequent."},
+    "magic_bean": {"value": 2000, "confidence": "low",
+      "notes": "Trades for special items during Beesmas; low frequency."},
+
+    "wax_soft": {"value": 1500, "confidence": "medium",
+      "notes": "Common wax — beequip upgrade material."},
+    "wax_hard": {"value": 5000, "confidence": "medium",
+      "notes": "Uncommon wax — bigger upgrade."},
+    "wax_caustic": {"value": 15000, "confidence": "medium",
+      "notes": "Rare, risky wax — high upside."},
+    "wax_swirled": {"value": 8000, "confidence": "medium",
+      "notes": "Reroll wax."},
+
+    "cloud_vial_pickup": {"value": 8000, "confidence": "medium",
+      "notes": "Cap 10 held — don't over-value if already at cap."}
+  },
+
+  "ability_tokens": {
+    "_notes": "Ability tokens are TIME-VALUED — worth their expected honey delta during their stack duration. Values assume mid-farming state. Reward shaping should also decay these to 0 if not immediately usable (e.g. Melody with no crit build).",
+
+    "haste": {"value": 3000, "confidence": "medium",
+      "notes": "+10% MS per stack, ~5k honey/hour boost while active."},
+    "focus": {"value": 2500, "confidence": "medium",
+      "notes": "+3% crit chance per stack — mostly matters for combat/bosses."},
+    "rage": {"value": 5000, "confidence": "medium",
+      "notes": "+1 flat bee attack per stack. Highest boss-fight value."},
+    "melody": {"value": 4000, "confidence": "medium",
+      "notes": "+100% crit dmg 30s. Boss burst."},
+    "bomb": {"value": 500, "confidence": "medium",
+      "notes": "Instant nearby-flower harvest. Small direct honey gain."},
+    "boost_red": {"value": 1500, "confidence": "medium",
+      "notes": "×1.2 red pollen 15s. Situational to current field color."},
+    "boost_blue": {"value": 1500, "confidence": "medium"},
+    "boost_white": {"value": 1500, "confidence": "medium"},
+    "mark": {"value": 3000, "confidence": "medium",
+      "notes": "Field zone that boosts pollen/convert."},
+    "token_link": {"value": 4000, "confidence": "medium",
+      "notes": "Converts nearby tokens to honey — high value if many tokens on screen."},
+    "honey_gift": {"value": 5000, "confidence": "high",
+      "notes": "Instant honey. Literally a honey grant."},
+    "baby_love": {"value": 8000, "confidence": "medium",
+      "notes": "2x pollen 30s — big burst."},
+    "inspire": {"value": 6000, "confidence": "medium",
+      "notes": "2x pollen 5s, stacks 50 — highly bursty."}
+  },
+
+  "bee_treats": {
+    "sunflower_seed": {"value": 100, "confidence": "medium",
+      "notes": "25 base / 50 favored bond XP. Value = ~how much bond matters at your hive stage."},
+    "blueberry": {"value": 200, "confidence": "medium"},
+    "strawberry": {"value": 200, "confidence": "medium"},
+    "pineapple": {"value": 200, "confidence": "medium"},
+    "neonberry": {"value": 3000, "confidence": "medium",
+      "notes": "500 bond + radioactive; also Super Smoothie ingredient."},
+    "moon_charm_treat": {"value": 800, "confidence": "medium"},
+    "bitterberry": {"value": 5000, "confidence": "low",
+      "notes": "Mutation chance is the real value; hard to price."}
+  },
+
+  "eggs": {
+    "basic_egg": {"value": 1000, "confidence": "high",
+      "notes": "Basic Egg shop starts at 1k honey; value = replacement cost."},
+    "silver_egg": {"value": 20000, "confidence": "medium"},
+    "gold_egg": {"value": 400000, "confidence": "medium",
+      "notes": "Ticket Tent price = 50 tickets; if 1 ticket = 50k, gold ≈ 2.5M. But actual honey equivalent depends on egg contents."},
+    "diamond_egg": {"value": 2000000, "confidence": "medium"},
+    "star_egg": {"value": 8000000, "confidence": "low"}
+  }
+}
