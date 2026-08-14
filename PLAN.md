@@ -1,247 +1,185 @@
-# BeeBot — Full Roadmap
+# BeeBot — Roadmap
 
-Goal (reaffirmed): a Bee Swarm Simulator bot that starts from minimal imitation and self-improves toward high-level play, with the smallest possible scripted layer needed to bridge deterministic UI interactions. Optimize for **fast progression** and **max honey/second** at every stage.
+## The vision
 
-## Guiding principles
+Build a Bee Swarm Simulator AI that learns to play well **on its own terms** — discovering strategies, finding its own optimal patterns, adapting to whatever the game throws at it. Not a scripted macro dressed up as AI.
 
-- **Learn as much as possible. Script only what learning fundamentally can't do.** Prior version of this doc said "script what doesn't need judgment." Correction: script only two categories:
-  1. **Game constants** — egg prices, hive slot capacity, menu button pixel positions. Facts, not decisions.
-  2. **Safety** — ESC quit, mouse-corner failsafe, key-release cleanup.
-  Everything else — goal selection, boost sequences, item priority, field choice, boss fight tactics — is learned.
-- **Minimize human demonstration.** Just enough to seed action priors. RL/self-play does the mastery.
-- **Multi-module hybrid architecture.** Small specialized models for HUD reading, world detection, and behavior — coordinated by a LEARNED meta-policy that selects the current goal. HUD/world detectors stay specialized (small models, one job each). Goal selection is a learned policy on top of them, NOT a hardcoded rule set.
-- **Measure everything.** Honey/hour is the primary north-star metric. Every module decision is judged by how it moves that number.
-- **Don't let it be stubborn — design for curiosity.** The bot must try new things, not lock into the exact patterns you demonstrated. Concrete mechanisms:
-  - Imitation model uses higher dropout (0.35) to prevent overfitting to your exact play
-  - Inference uses stochastic sampling (temperature > 0) rather than always picking the argmax action
-  - RL fine-tuning uses entropy bonus in PPO to encourage exploration
-  - Consider intrinsic-motivation reward (curiosity bonus for visiting states rarely seen in training)
-  - Occasionally force random-field selection so the bot has to figure out new areas
-- **Camera control via mouse.** Beyond keyboard camera keys (`,` `.` I O), the bot must be able to look around via either shift-lock (Shift + WASD) or right-click-drag (helpers `right_mouse_down`/`up`, `drag_mouse`, `rotate_camera` in `robo_input.py`). Play recordings should include your natural camera-drag habits so the model learns them.
+- **Minimize hard-coded behavior.** The bot should learn HOW to play. What we script is the bare minimum plumbing — nothing that suggests strategy.
+- **Learn every playstyle organically.** Farming, questing, boss-fighting, boost sessions, hive management — RL discovers what works, in what order, and when. No hardcoded "always do X sequence" recipes.
+- **Reward the outcomes, not the paths.** Give the model honey/hour and let it invent the path. Don't hardcode "Field Dice → Cloud → Sprinkler" as an ordered recipe just because humans do it.
 
-## What's scripted vs learned (revised — MUCH more learned)
+## What is scripted (and what isn't)
 
-**Scripted (never learned — game constants + safety):**
-- Menu button locations (fixed UI pixels — buy egg, hatch, hive slot positions)
-- Egg prices, RJ prices, tool prices (from `items/item_db.json`, updated when patched)
-- Safety wrappers (ESC, FAILSAFE, key-release-on-exit)
-- Screen capture pipeline / input send plumbing
-- Base honey-equivalent values in `token_values.json` (anchor for reward shaping — TUNED, not learned)
+**Scripted (permanent — genuine constants, not strategy):**
+- Menu button pixel positions where they can't be visually discovered (buy egg, hatch bee)
+- Item price tables (data, not decisions)
+- Safety wrappers (ESC quit, mouse-corner failsafe, key-release cleanup)
+- Screen capture + input plumbing
+- HUD reader models (small purpose-built vision models — teach the bot to READ, not to decide)
 
-**Bootstrap-scripted then LEARNED (RL replaces the script):**
-- Menu navigation flows (buy egg, hatch, accept quest) — scripted v1 for immediate function, RL fine-tunes timing and adds context-aware skipping/reordering
-- Nothing else is bootstrap-scripted anymore.
+**Learned (everything else, no exceptions):**
+- Farming patterns per field
+- When to talk to bears (and which ones)
+- When to convert vs keep gathering
+- Boost session composition and timing (bot discovers what item combos work)
+- Field selection based on current game state
+- Boss fight tactics (per boss, learned independently)
+- Sprout collection routes
+- Route optimization anywhere
+- Camera work
+- Item usage timing
+- Mob dodging / engagement
+- Strategic long-term decisions (hive color, save vs spend) — Phase 5
 
-**Fully learned from Day 1:**
-- **Goal selection** (previously scripted) — a learned meta-policy picks the current activity based on HUD + inventory + time state
-- **Boost session sequence** (previously scripted) — RL discovers the order and timing
-- **Field selection** (previously scripted) — RL picks the highest-value field considering boost multiplier, mob density, travel time
-- **Item priority** during collection — RL prioritizes based on shaped reward, no hardcoded priority
-- **Boss fight tactics** — RL learns from boss-specific training episodes
-- **Route optimization** — RL discovers walking patterns
-- **Camera control** — mouse-drag and shift-lock use learned from demo, refined by RL
-- **In-boost token grabbing order** — RL discovers optimal grab sequence
+**Scripted safety nets that don't teach strategy:**
+- Auto-click through dialogue on stall (prevents indefinite freeze, doesn't tell bot when to engage bears)
+- Roblox auto-relaunch on crash
+- Zombie process cleanup on launch
 
-**The "learned meta-policy" is the biggest change from v1.** Instead of a hardcoded `orchestrator.py` with 20 if/elif rules, we train a small policy network:
-- Input: HUD state (honey, tickets, pollen%, buffs active, boss visible, night/day, quest tracker deltas), inventory summary, recent action history
-- Output: current goal (one of ~10 activities)
-- Reward: shaped honey earned over the next N minutes with that goal active
-- Training: RL bootstrap-imitated from user's implicit goal choices (inferable from user's demonstrated activity flow), then self-play refinement
+## Phases (revised — minimize-scripting focus)
 
-Cost: MUCH more compute, longer time-to-first-working-bot, more debugging when RL doesn't converge. Upside: dramatically higher innovation ceiling. Aligns with vision statement.
+### Phase 2a — Imitation bootstrap ✅ DONE
+
+Small CNN + LSTM trained on ~2.5h of your recorded gameplay. Gives RL a warm-start policy so it doesn't start from pure noise.
+
+**Move-on criteria:** LSTM checkpoint saved, model produces coherent farming behavior (walks in field, swings scoop) even if imperfect.
 
 ---
 
-## Phase 2a — First imitation model (~1-2 weeks)
+### Phase 2b — Live inference + minimal scripted plumbing 🟡 IN PROGRESS
 
-**Inputs:** ~4-5 hours of recorded gameplay across 10-15 bee stage. Coverage includes all activity types (farming, hive convert, bear quests, mob combat, menu use, sprout pop, planter place, one Wealth Clock use, one Memory Match).
+Real-time play loop. Model reads screen → predicts actions → executes via `robo_input`. Cursor clip zones, whitelist filter, stall-rescue clicks — all safety nets, NOT strategy.
 
-**Deliverables:**
-- `dataset.py` — PyTorch Dataset that reads `data/session_*/frames/*.jpg` + `labels.jsonl`
-- `model.py` — small CNN → dense head → multi-label sigmoid over 75 keys + 2 mouse buttons + mouse (x,y) regression
-- `train.py` — training loop with BCE loss on keys + MSE on cursor
-- `play.py` — inference: screencap → model → keys/mouse each frame
+**In scope:**
+- `play.py` and `rl/env.py` runtime
+- LSTM hidden state management
+- Cursor exclusion zones (title bar, top-bar dropdown)
+- Auto-click-through-dialogue on stall (template-based, only fires when dialogue visible)
+- Roblox auto-relaunch + zombie process cleanup
 
-**Milestone:** bot autonomously farms Sunflower Field for 20 minutes without human intervention, hive-returns and converts at least once.
+**Explicitly NOT in scope (removed from earlier plan):**
+- ~~Scripted boost cycles~~ — boosting is strategy, must be learned
+- ~~Scripted quest cycles~~ — bear engagement is strategy, must be learned  
+- ~~Scripted "buy egg on honey threshold"~~ — spending decisions are strategy, learned in Phase 5
+- ~~Recorded path playback~~ — navigation is learned via RL
 
-**Honey/sec optimization at this stage:** minimal — the model just needs to farm competently. Focus on stability, not speed.
-
----
-
-## Phase 2b — Add memory + scripted progression bridge (~2 weeks)
-
-**Why:** feed-forward CNN can't chain multi-step actions like "walk to hive → click convert." Adding a short LSTM/attention window over the last ~30 frames unlocks short-horizon reactive behaviors. Scripted bridges handle deterministic UI flows the model won't learn from thin demonstration data.
-
-**Deliverables:**
-- Enhanced `model.py` — LSTM over 30-frame history, same output head
-- `scripts/buy_egg.py` — walks to shop, clicks Basic Egg based on current honey tier
-- `scripts/hatch_bee.py` — opens hive menu, clicks hatch, places in first empty slot
-- `scripts/quest_cycle.py` — walks to each easy bear (Black/Brown/Panda when unlocked), accepts + turns in
-- `scripts/wealth_clock.py` — daily interact
-- `scripts/memory_match.py` — daily minigame (may need vision for card-flip pairs)
-- `scripts/return_to_hive.py` — triggered when pollen bar visually full
-- `orchestrator.py` — top-layer routine planner deciding "farm vs script cycle"
-
-**Milestone:** bot runs autonomously for 24 hours without intervention, progresses in bee count.
-
-**Honey/sec optimization:** scripted `return_to_hive` triggered on pollen-full detection → no idle time. Scripted `buy_egg` triggered whenever honey hits a threshold → bee count grows automatically. Quest turn-ins add bonus honey.
+**Move-on criteria:**
+- Bot can run untouched for 4+ hours without human intervention on non-crash issues
+- Dialogue-rescue click works when triggered
+- Roblox auto-recovers from crashes at least once during a test session
 
 ---
 
-## Phase 2c — HUD reader modules (~1-2 weeks)
+### Phase 2c — HUD readers 🟡 PARTIAL
 
-**Why:** the routine planner and RL reward function need to *read* game state — honey count, pollen %, buff timers, boss HP. A CNN over the whole screen won't do this reliably. Small purpose-built models will.
+Purpose-built vision models that let RL SEE game state. NOT decision-makers — just eyes.
 
-**Deliverables:**
-- `hud/honey_ocr.py` — reads honey number (short-scale suffix parsing: k, M, B, T, q, Q, s, S, o, N, d)
-- `hud/tickets_ocr.py` — reads ticket count
-- `hud/pollen_bar.py` — reads pollen fill %
-- `hud/buff_bar.py` — icon classifier for the ~30 common buff icons, with stack count + timer
-- `hud/boss_bar.py` — detects boss engagement + HP remaining
-- `hud/quest_tracker.py` — reads active quest text via OCR
+**Built:**
+- Pollen bar % (template match + OCR fill measurement)
+- Honey count (EasyOCR)
 
-**Milestone:** bot knows exact honey/ticket/pollen numbers at every frame; orchestrator can trigger scripts based on real thresholds (e.g., "honey ≥ 100k → buy Golden Egg script").
+**To build:**
+- Ticket count OCR (needs bot to open menu — build with quest tracker)
+- Buff icon strip classifier (detects active Field Boost, Haste, Focus, etc. — informs RL "what buffs are active" as observation)
+- Boss HP bar detector (know when a boss fight is happening)
+- Quest tracker OCR (parse text on left side — enables RL to see quest progress and get reward on quest advancement)
 
-**Honey/sec optimization:** with accurate HUD reads, orchestrator can dynamically choose the highest-yield activity ("this field has +300% boost → farm here instead").
-
----
-
-## Phase 3a — RL fine-tuning on farming (~3-4 weeks)
-
-**Why:** this is where "better than a human" starts. The imitation model has learned "what farming looks like." RL improves execution past your skill via reward signal.
-
-**Setup:**
-- Reward = honey earned per minute (from HUD honey OCR)
-- Environment = live game (no reset — long continuous episodes)
-- Algorithm = PPO (stable, well-supported in stable-baselines3)
-- Bootstrap from Phase 2b model weights
-- Only fine-tune the last few layers initially, then unfreeze more
-
-**Deliverables:**
-- `rl/env.py` — Gym environment wrapping the game (observation = screen frame + HUD state, action = keys+mouse, reward = Δhoney per step)
-- `rl/train_ppo.py` — training loop
-- Trained checkpoint that outperforms your farming honey/hour
-
-**Milestone:** bot's honey/hour exceeds your recorded honey/hour by 20%+ on the same field composition.
-
-**Honey/sec optimization:** this IS the optimization. RL discovers walking patterns, camera angles, and swing timing better than you demonstrated.
+**Move-on criteria:**
+- All 5 HUD reader modules working with acceptable accuracy (>85%)
+- RL observation includes buff state + quest progress
+- Reward function can distinguish quest progress from pure honey gain
 
 ---
 
-## Phase 3b — Boost cycle execution (~2 weeks)
+### Phase 3 — RL fine-tuning (the main event) 🟡 STARTED
 
-**Why:** endgame farming operates in 15-minute boost sessions with a formulaic sequence. Scripting the sequence gets you 2-10x honey/hour vs pure passive farming.
+PPO with CNN feature extractor, warm-started from imitation LSTM. Multi-timescale honey reward with shaped bonuses for quest progress + buff engagement. This is where the bot ACTUALLY learns to play well.
 
-**Deliverables:**
-- `boost_cycle.py` — trigger sequence:
-  1. Detect materials available (Field Dice, Cloud Vial, Sprinkler, Super Smoothie via HUD/inventory)
-  2. Execute in correct order: Field Dice → Cloud Vial → Sprinkler → Super Smoothie → grab Boost tokens FIRST → Rage → Focus → Melody → farm target field
-  3. End when 15-min timer expires; return to hive with full boost still active
-- Integration with orchestrator — auto-trigger when enough materials stocked
+**Reward function surface (as HUD readers land):**
+- Δ honey (per tick, minute, hour) — primary signal
+- Quest progress (once quest tracker OCR works) — encourages bear interaction
+- Buff-active bonuses — rewards engaging with boost items when opportunity present
+- Stall penalty (mild) — discourages doing nothing productive
 
-**Milestone:** when materials exist, bot executes full boost cycle automatically. Honey/hour during boost ≥ 5x passive rate.
+**No scripted "do this then that" sequences.** RL discovers boost cycles, quest cycles, farm routes.
 
----
-
-## Phase 3c — Specialized skill modules (~4-6 weeks)
-
-Each of these is a smaller learned module (imitation warmup, then task-specific RL), coordinated by the orchestrator when conditions match.
-
-**Modules:**
-- **King Beetle boss** — RL agent trained on repeated fights. Reward: boss defeated + time-to-defeat inverse.
-- **Ant Challenge** — 5-min survival, reward = ants killed
-- **Sprout collection** — recognizes sprout on ground, walks to it, collects drops
-- **Night event** — recognizes night, handles Vicious Bee spawn OR flees Werewolf
-- **Field selection policy** — reads on-screen field boost multiplier, picks best-return field
-- **Planter management** — places planters on best matching field, returns to harvest after N hours
-
-**Milestone:** bot handles all major recurring activity types without intervention.
+**Move-on criteria:**
+- Bot honey/hour exceeds recorded imitation baseline by 50%+
+- Bot autonomously engages bears and completes at least some simple quests
+- Bot autonomously uses items (dice, potions) when it has them
+- No repeated stalls > 5 min per hour of training
 
 ---
 
-## Phase 4 — Autonomous progression (~4 weeks continuous)
+### Phase 4 — Deep specialization + autonomous progression
 
-**Goal:** bot runs 24/7 (with occasional restarts), progresses through gates on its own.
+Multiple heads of specialized RL — a distinct sub-policy for each activity that has enough distinct patterns to warrant its own learning:
+- Boss fights (per boss: King Beetle, Stump Snail, Tunnel Bear, Coconut Crab)
+- Ant Challenge
+- Sprout collection
+- Planter management
+- Night events
 
-**What's still manual:** strategic decisions — which bee to gift with Star Treats, red-vs-blue hive commitment, when to spend on Diamond Egg vs save. Log in weekly to make these calls. Bot does the execution.
+The top-level policy from Phase 3 learns WHEN to switch into a specialized sub-policy. Both levels learned, not scripted.
 
-**Milestone:** bot progresses from 15 bees to 25 bees autonomously in ≤2 weeks real time. Honey/hour scales with hive size.
+Also: bot autonomously progresses through bee-count gates (15 → 25 → 35+).
 
----
-
-## Optional Phase 5 — Deep specialization (open-ended)
-
-- Boss-specific RL agents for Stump Snail, Tunnel Bear, Coconut Crab
-- Bee Bear / Stick Bug challenge attempts (may or may not succeed — these are hard even for humans)
-- Beequip loadout optimization (bandit search over compositions)
-- Comp optimization via model-based RL on simulator learned from your play data
-
-## Phase 6 — Full autonomy (long-term strategic + post-training learning)
-
-**Trigger:** Phases 2-4 stable. Bot handles execution; now we push it to make strategic calls autonomously.
-
-### 6a. Long-term decision modules
-
-- **Multi-timescale reward** — reward function tracks honey earned over multiple windows: per-minute (fast RL feedback), per-hour (session-level), per-day (strategic). Weight blends over time so the bot cares about long-term outcomes, not just next-second gain.
-- **Learned value function** (world model) — a small neural network trained on bot's own play data predicts `expected_honey_per_day(current_state, action)`. Used for planning: "if I spend 500k on Diamond Egg now, what's my day-out honey/hour vs saving?"
-- **Bandit search on strategic choices** — treat "hive color commitment" as a multi-armed bandit. Bot tries a color for N days, measures cumulative honey, compares. Eventually converges on best-for-this-account color. Includes rollback: if bot commits blue then color composition changes (rare gifted bee obtained), it can un-commit.
-- **Star Treat / Star Jelly usage policy** — RL policy that picks which bee to gift based on shaped reward: `expected_gifted_hive_contribution × obtain_probability_delta`. Bot may make "wrong" choices, RL updates values from measured outcome.
-- **Save vs spend policy** — learned from cumulative return: bot compares "spend now on X" vs "save for future Y" using the value function. Occasionally overspends or oversaves as exploration.
-
-### 6b. Post-training content learning
-
-- **Curiosity/novelty detection** — feature extractor identifies "I've never seen this visual state before" (unfamiliar item icon, bee color, field texture). Novel state triggers `explore mode`: bot walks around it, interacts with it, records outcomes.
-- **VLM item recognition** — Tier 3 of `item_recognizer.py` fully implemented. When an unknown item is on screen and the cursor hovers its tooltip, the bot captures the region, sends to a vision-language model (Claude/Gemini API or local LLaVA), receives structured item description, appends to `item_db.json` with `confidence: "vlm_inferred"`.
-- **Auto-updating goal_profiles** — when a new item enters item_db, the reward calculator auto-slots it with default multipliers; over play sessions, RL refinement adjusts values based on measured outcome.
-- **New-content activation cycle** — bot notices unknown NPC → walks to them → attempts interaction → observes dialog → uses VLM to parse dialog text → auto-generates a scripted flow for that NPC's quests if pattern is standard (accept → farm/kill target → return → turn in).
-
-### 6c. Bucko / Riley questline modules
-
-Bucko Bee (Blue HQ) and Riley Bee (Red HQ) unlock after obtaining a Translator (from Science Bear). Both have long quest chains (~250 quests each). Same format as other bear quests — collect X pollen from Y field, kill Z mobs.
-
-- Extend `quest_cycle.py` to include Bucko and Riley as targets once Translator is detected in inventory
-- Add Blue HQ and Red HQ locations to the routine planner
-- Milestone rewards: Tide Popper at Bucko Q250, Dark Scythe at Riley Q250 — these get added to synergy_combos.json as unlocks
-- Bucko/Riley questlines take dozens of real-time days; treated as background objectives — bot works on them whenever passing through appropriate fields
+**Move-on criteria:**
+- Bot beats King Beetle without human intervention
+- Bot progresses through at least the 15-bee gate on its own
+- Bot handles all major activity types (farm, quest, boss, sprout, planter) autonomously
 
 ---
 
-## Honey/sec optimization checklist (applied continuously)
+### Phase 5 — Long-term strategy + post-training content adaptation
 
-Every phase should hit as many of these as possible:
+The remaining hardest problems:
+- **Long-term strategic decisions** — hive color commitment, save-vs-spend, which bee to gift with Star Treat. Learned via extended-window rewards (per-day, per-week) and a small strategic-decision policy.
+- **VLM integration** — vision-language model reads novel item descriptions, updates item database automatically. Lets bot adapt to game updates without retraining.
+- **Bucko/Riley questlines** — extend RL to handle long quest chains once quest tracker OCR is solid.
 
-- [ ] No idle time (immediate hive return on pollen full)
-- [ ] Active field selection (highest field boost visible)
-- [ ] Boost session executed whenever materials allow
-- [ ] Wealth Clock daily
-- [ ] Memory Match daily
-- [ ] Ticket Tent purchases: Gold Eggs when 50+ tickets stockpiled
-- [ ] Bear quest cycle: turn in ready quests before farming
-- [ ] Planter place-and-forget on best-matching fields
-- [ ] Scoop/backpack/mask upgrades as honey allows
-- [ ] Never buy at bad honey/ticket ratios (learned heuristics or hardcoded)
+**Move-on criteria:**
+- Bot commits to a hive color autonomously and stays consistent
+- Bot handles new items (added post-training) via VLM lookup
+- Bot progresses through Bucko or Riley to Q100+
 
 ---
 
-## Rough timeline
+## Timeline predictions
 
-- Weeks 1-2: Phase 2a (first imitation model)
-- Weeks 3-4: Phase 2b (memory + scripted bridges)
-- Weeks 5-6: Phase 2c (HUD readers)
-- Weeks 7-10: Phase 3a (RL fine-tune on farming)
-- Weeks 11-12: Phase 3b (boost cycles)
-- Weeks 13-20: Phase 3c (specialized modules)
-- Weeks 21-24: Phase 4 (autonomous progression)
-- Beyond: Phase 5 (deep specialization)
+**Per-phase estimates.** Split into DEV TIME (my code + your testing) and TRAINING TIME (bot playing autonomously to accumulate learning). Real calendar time = whichever is longer.
 
-Hobby pace at ~10 hrs/week. Compressed if you go harder, stretched if you go slower. Not linear — expect iteration, backtracking, and dead ends.
+| Phase | Dev time | Training time | Realistic calendar | Move-on criteria |
+|---|---|---|---|---|
+| 2a | ~ done | ~ done | ~ done | LSTM produces coherent behavior |
+| 2b | 1-2 weeks | — | 1-2 weeks | 4+ hour unattended runs stable |
+| 2c | 2-3 weeks | — | 2-3 weeks | 5 HUD readers accurate |
+| 3 | 1 week (reward tuning) | 200-500 hrs | 1-3 months | 50%+ over imitation baseline |
+| 4 | 2-4 weeks per module × 5 modules | 100-200 hrs per module | 4-6 months | Beats KB, progresses to 15 bees |
+| 5 | 2-3 months | 500+ hrs | 3-6 months | Autonomous hive color, VLM works, Q100+ |
 
----
+**Total realistic horizon:** **10-18 months** from now to "bot plays most of the game autonomously."
 
-## What compromises the "pure trial-and-error" original vision
+**Calendar time depends heavily on training uptime.** Rough:
+- 24/7 training: fastest, but hardware/electricity commitment
+- 8 hrs/night (overnight only): ~3x slower calendar time, most livable
+- Weekends only: ~10x slower, but still gets there
 
-The scripted bridges in Phase 2b (buy_egg, hatch_bee, quest_cycle, wealth_clock, memory_match) are the concession. These are ~200 lines of deterministic UI clicks that could theoretically be learned via RL if given massive compute + curriculum learning. With hobby compute, learning them wastes weeks for zero improvement over hand-writing them.
+## Non-negotiables
 
-Everything downstream — farming, bosses, sprouts, field selection, boost timing, mob dodging, execution optimization — is genuinely learned and can genuinely surpass your play. That's where the "innovative and better than a human" part lives.
+1. **Never hardcode strategic sequences.** If it feels like it belongs in a macro tool, it doesn't belong here.
+2. **Always give RL the choice.** Safety nets prevent indefinite freezes; they don't remove decisions.
+3. **Measure everything against the honey/hour north star.** Reward shaping is fine (quest progress, buff engagement) but the ultimate benchmark is what the bot actually achieves.
+4. **Don't rewrite requirements once training data is collected.** New action keys, new obs channels — those require re-recording. Additions to reward or safety are fine anytime.
 
-Result: ~90% of the eventual bot's competence comes from learning. ~10% is scripted glue. That's the honest tradeoff.
+## What each phase looks like when "working"
+
+**Phase 2b working:** Bot runs for hours without needing your attention. Occasional dialogue traps get auto-rescued. Roblox crashes get auto-recovered. You come back after 4 hrs and honey is meaningfully higher than when you left.
+
+**Phase 2c working:** Bot's env prints show buff icons detected, quest progress detected, boss HP visible when engaged. Reward function reacts to these signals.
+
+**Phase 3 working:** Over multiple training sessions, ep_rew_mean trends up week over week. Bot's farming becomes visibly more efficient. Bot starts talking to bears without you nudging it. Boss fights (initially disaster) become survivable.
+
+**Phase 4 working:** Bot beats King Beetle first-try, farms through gates, doesn't need you to intervene for days at a time.
+
+**Phase 5 working:** Bot makes strategic calls (hive color, big purchases) that you don't disagree with when you check in weekly. Handles game updates without breaking.
