@@ -132,6 +132,15 @@ HUD_READ_EVERY_N_STEPS = 10
 # for a few seconds between refreshes.
 REGION_REFRESH_EVERY_N_STEPS = 50    # ~5 sec at 10 fps
 
+# Dialogue-escape safety net — if pollen/honey haven't budged for this many
+# steps (~60 sec at 10 fps), the bot is likely stuck in a bear quest dialogue.
+# BSS dialogues close by clicking IN the dialogue box repeatedly to advance
+# through text. Auto-click at center of screen every N stalled steps —
+# progresses any open dialogue, harmless otherwise (in-world click = tool swing).
+# This doesn't teach bot to avoid bears; it just prevents indefinite stalls.
+STALL_STEPS_BEFORE_DIALOGUE_CLICK = 600
+DIALOGUE_CLICK_INTERVAL_STEPS = 30    # ~3 sec between rescue clicks
+
 # Only expose game-relevant keys in the action space (matches imitation training)
 ACTION_KEYS = sorted(GAME_RELEVANT_KEYS)
 N_KEYS = len(ACTION_KEYS)
@@ -199,6 +208,10 @@ class BSSEnv(gym.Env):
         self._last_status_print_step = 0
         self._last_status_print_ts = time.time()
         self._cached_hud = {}          # last successful HUD read, reused between OCR calls
+        self._stalled_since_step = None
+        self._last_rescue_click_step = 0
+        self._last_seen_honey = None
+        self._last_seen_pollen = None
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -280,6 +293,41 @@ class BSSEnv(gym.Env):
             clip_cursor_to_region(self._region)
 
         reward = self._reward.compute(hud, obs_frame=obs)
+
+        # Dialogue-escape safety: if pollen and honey haven't changed for
+        # STALL_STEPS_BEFORE_DIALOGUE_CLICK, click at center of screen to
+        # advance any open dialogue. Not a punishment — bot still gets to
+        # choose whether to engage bears. Just prevents indefinite stall.
+        current_honey = hud.get("honey")
+        current_pollen = hud.get("pollen_fill")
+        state_changed = False
+        if current_honey is not None and self._last_seen_honey is not None:
+            if current_honey != self._last_seen_honey:
+                state_changed = True
+        if current_pollen is not None and self._last_seen_pollen is not None:
+            if abs(current_pollen - self._last_seen_pollen) > 0.005:
+                state_changed = True
+        if current_honey is not None:
+            self._last_seen_honey = current_honey
+        if current_pollen is not None:
+            self._last_seen_pollen = current_pollen
+
+        if state_changed or self._stalled_since_step is None:
+            self._stalled_since_step = self._step_count
+        elif (self._step_count - self._stalled_since_step > STALL_STEPS_BEFORE_DIALOGUE_CLICK
+              and self._step_count - self._last_rescue_click_step > DIALOGUE_CLICK_INTERVAL_STEPS
+              and self._region is not None):
+            # Click at center of the Roblox window
+            cx = self._region["left"] + self._region["width"] // 2
+            cy = self._region["top"] + self._region["height"] // 2
+            move_mouse(cx, cy)
+            time.sleep(0.03)
+            pydirectinput.mouseDown(button="left")
+            time.sleep(0.04)
+            pydirectinput.mouseUp(button="left")
+            self._last_rescue_click_step = self._step_count
+            if self._step_count % 300 < 30:  # avoid log spam
+                print(f"[env t={self._step_count}] stall rescue click (stuck {self._step_count - self._stalled_since_step} steps)")
 
         # Periodic human-readable status so you can see progress at a glance
         self._step_count += 1
