@@ -132,6 +132,13 @@ HUD_READ_EVERY_N_STEPS = 10
 # for a few seconds between refreshes.
 REGION_REFRESH_EVERY_N_STEPS = 50    # ~5 sec at 10 fps
 
+# Artificial episode length for SB3's Monitor wrapper. Our env has no
+# natural episode end (game runs forever), so we mark truncated=True every
+# N steps. This gives SB3 something to average over for ep_rew_mean (the
+# master learning-progress metric). Doesn't reset game state — bot keeps
+# playing across "episodes" seamlessly.
+EPISODE_LENGTH_STEPS = 1024
+
 # Dialogue-escape safety net — if pollen/honey haven't budged for this many
 # steps (~60 sec at 10 fps), the bot is likely stuck in a bear quest dialogue.
 # BSS dialogues close by clicking IN the dialogue box repeatedly to advance
@@ -212,6 +219,7 @@ class BSSEnv(gym.Env):
         self._last_rescue_click_step = 0
         self._last_seen_honey = None
         self._last_seen_pollen = None
+        self._steps_in_episode = 0
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -230,6 +238,7 @@ class BSSEnv(gym.Env):
         # Release anything we were holding, reset reward tracking
         self._release_all()
         self._reward.reset()
+        self._steps_in_episode = 0
         # Verify BSS is loaded — recover if crashed
         if not is_bss_loaded():
             print("[env] BSS not loaded during reset — attempting recovery")
@@ -350,7 +359,12 @@ class BSSEnv(gym.Env):
         # episode. Stopping training is handled by StopOnKeyCallback in
         # train_ppo.py, which halts the training loop entirely.
         terminated = False
-        truncated = False
+        # Artificial episode boundary every EPISODE_LENGTH_STEPS so SB3's
+        # Monitor wrapper can compute ep_rew_mean. Doesn't reset game state
+        # (reset() releases keys + resets reward accumulator, but the game
+        # continues from where the bot is).
+        self._steps_in_episode += 1
+        truncated = self._steps_in_episode >= EPISODE_LENGTH_STEPS
 
         info = {"hud": hud, "total_reward": self._reward.total_reward_this_episode}
         return obs, reward, terminated, truncated, info
