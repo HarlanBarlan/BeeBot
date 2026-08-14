@@ -87,24 +87,41 @@ def main():
     # to "cpu" — it means single-env inference overhead outweighs CNN speedup.
     device = "cuda"
 
-    model = PPO(
-        "MlpPolicy",                  # MLP head — CNN handled by custom features_extractor
-        env,
-        policy_kwargs=policy_kwargs,
-        learning_rate=LEARNING_RATE,
-        n_steps=N_STEPS,
-        batch_size=BATCH_SIZE,
-        ent_coef=0.02,                # entropy bonus — encourages exploration
-        verbose=1,
-        tensorboard_log=str(LOGS_DIR),
-        device=device,
-    )
-
-    # Warm-start the CNN backbone from imitation checkpoint if available.
-    # RL policy head still learns from scratch — but the "what does a
-    # flower / hive / mob look like" understanding is inherited.
-    if WARM_START_CKPT is not None:
-        load_backbone_from_lstm_ckpt(model.policy, WARM_START_CKPT)
+    # If a previous PPO checkpoint exists, RESUME from it (preserves learning
+    # across sessions and machines). Otherwise create a fresh PPO and warm-
+    # start its CNN backbone from the imitation LSTM.
+    resume_path = MODELS_DIR / "beebot_ppo_latest.zip"
+    if resume_path.exists():
+        print(f"[resume] loading existing PPO checkpoint: {resume_path}")
+        model = PPO.load(
+            str(resume_path),
+            env=env,
+            device=device,
+            tensorboard_log=str(LOGS_DIR),
+        )
+        # Keep learning rate / entropy from the checkpoint by default. If
+        # you want to reset those, uncomment:
+        # model.learning_rate = LEARNING_RATE
+        # model.ent_coef = 0.02
+    else:
+        print("[fresh] no PPO checkpoint found — creating new PPO with LSTM warm-start")
+        model = PPO(
+            "MlpPolicy",                  # MLP head — CNN handled by custom features_extractor
+            env,
+            policy_kwargs=policy_kwargs,
+            learning_rate=LEARNING_RATE,
+            n_steps=N_STEPS,
+            batch_size=BATCH_SIZE,
+            ent_coef=0.02,                # entropy bonus — encourages exploration
+            verbose=1,
+            tensorboard_log=str(LOGS_DIR),
+            device=device,
+        )
+        # Warm-start the CNN backbone from imitation checkpoint if available.
+        # RL policy head still learns from scratch — but the "what does a
+        # flower / hive / mob look like" understanding is inherited.
+        if WARM_START_CKPT is not None:
+            load_backbone_from_lstm_ckpt(model.policy, WARM_START_CKPT)
 
     checkpoint_cb = CheckpointCallback(
         save_freq=SAVE_EVERY_N_STEPS,
