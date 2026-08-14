@@ -158,6 +158,14 @@ EPISODE_LENGTH_STEPS = 1024
 STALL_STEPS_BEFORE_DIALOGUE_CLICK = 600
 DIALOGUE_CLICK_INTERVAL_STEPS = 30    # ~3 sec between rescue clicks
 
+# After a successful dialogue-rescue click, suppress the bot's E key for a
+# while so it can walk out of the NPC's E-range before its policy re-presses
+# E and re-opens the dialogue. Without this we've seen the rescue fire
+# hundreds of times in a row (dialogue closes → bot presses E → dialogue
+# opens → repeat) for over an hour of wasted training.
+POST_RESCUE_E_SUPPRESS_STEPS = 50     # ~10 sec at 5 fps — enough for the
+                                      # policy's WASD to walk the bot out
+
 # Only expose game-relevant keys in the action space (matches imitation training)
 ACTION_KEYS = sorted(GAME_RELEVANT_KEYS)
 N_KEYS = len(ACTION_KEYS)
@@ -287,6 +295,9 @@ class BSSEnv(gym.Env):
         self._last_honey_read_ts = None
         # Manual-pause state (F8 hold) — tracked so we only print on transitions
         self._paused = False
+        # Step index up to which the E key is suppressed (set after dialogue
+        # rescue clicks to prevent immediate re-trigger of the same dialogue)
+        self._e_suppress_until_step = -1
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -636,6 +647,11 @@ class BSSEnv(gym.Env):
         # bit crude but simple — a Bernoulli action head would be cleaner)
         for i, name in enumerate(ACTION_KEYS):
             want = key_probs[i] > 0.5
+            # Post-rescue E suppression: force E off for a window after a
+            # dialogue-rescue click so the bot can escape the NPC's E-range
+            # before its policy re-triggers the dialogue.
+            if name == "e" and self._step_count < self._e_suppress_until_step:
+                want = False
             have = name in self._held_keys
             if want and not have:
                 try: pydirectinput.keyDown(name)
@@ -742,5 +758,14 @@ class BSSEnv(gym.Env):
         pydirectinput.mouseDown(button="left")
         time.sleep(0.04)
         pydirectinput.mouseUp(button="left")
+        # Force-release E if held, then suppress E for a window so the
+        # bot can escape the NPC's proximity before its policy re-presses
+        # E and re-opens the dialogue we just closed.
+        if "e" in self._held_keys:
+            try: pydirectinput.keyUp("e")
+            except Exception: pass
+            self._held_keys.discard("e")
+        self._e_suppress_until_step = self._step_count + POST_RESCUE_E_SUPPRESS_STEPS
         print(f"[env t={self._step_count}] dialogue-rescue click at ({cx},{cy}) "
-              f"(match conf {max_val:.2f})")
+              f"(match conf {max_val:.2f}) — E suppressed for "
+              f"{POST_RESCUE_E_SUPPRESS_STEPS} steps")
