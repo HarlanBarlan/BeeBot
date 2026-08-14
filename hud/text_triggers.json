@@ -1,18 +1,27 @@
 {
   "_schema_doc": "Text trigger rules for auto-dismissing popups and completing simple dialogs the bot gets stuck on. Each rule: match phrase (case-insensitive substring) + response action. Order matters — first match wins. Add rules as new stuck-states are discovered.",
   "_actions_supported": {
-    "press_key": "Press a single keyboard key (e.g. 'esc', 'e', 'enter')",
-    "click_at_match": "Click the center of where the matched text was found",
-    "click_at": "Click at fixed pixel coords relative to Roblox window (params: {x, y})"
+    "press_key": "Press a single keyboard key (params: {key: 'e'|'enter'|'w'|'space'|...})",
+    "click_at_match": "Click the center of where the matched text was found on screen",
+    "click_at": "Click at absolute pixel coords relative to Roblox window (params: {x, y})",
+    "click_at_frac": "Click at fractional window coords 0.0-1.0 (params: {x, y}) — resolution-independent",
+    "noop": "Log the detection but take no action (for phrases we can't do anything about)"
   },
+  "_dismissal_strategy": "Do NOT use ESC — it opens Roblox's system menu which is worse than most popups. Preferred dismiss actions: (a) click_at_match on the specific button text (X, Close, OK), (b) click_at_frac to click a safe spot outside the dialog, (c) press a movement key (W) which dismisses many UI overlays.",
+  "_notes": [
+    "Fractional coords for click_at_frac: (0.9, 0.85) = bottom-right area, typically outside dialogs. Adjust if it clicks something bad.",
+    "For dialogs with a Close/X button, click_at_match works if the text is exactly 'Close' or 'X'.",
+    "Add per-dialog rules as you discover new stuck states in gameplay."
+  ],
+
   "triggers": [
-    {"phrase": "age verification", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 30},
-    {"phrase": "would you like to accept", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 5},
-    {"phrase": "chat with your friends", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 30},
-    {"phrase": "server closing", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 60},
     {"phrase": "click to continue", "action": "click_at_match", "cooldown_sec": 3},
     {"phrase": "press enter to continue", "action": "press_key", "params": {"key": "enter"}, "cooldown_sec": 3},
     {"phrase": "press e to", "action": "press_key", "params": {"key": "e"}, "cooldown_sec": 3},
-    {"phrase": "reset character", "action": "press_key", "params": {"key": "esc"}, "cooldown_sec": 60}
+    {"phrase": "would you like to accept", "action": "press_key", "params": {"key": "e"}, "cooldown_sec": 5},
+    {"phrase": "close", "action": "click_at_match", "cooldown_sec": 10},
+    {"phrase": "age verification", "action": "click_at_frac", "params": {"x": 0.9, "y": 0.85}, "cooldown_sec": 30},
+    {"phrase": "chat with your friends", "action": "click_at_frac", "params": {"x": 0.9, "y": 0.85}, "cooldown_sec": 60},
+    {"phrase": "server closing", "action": "noop", "cooldown_sec": 60}
   ]
 }

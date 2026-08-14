@@ -93,9 +93,18 @@ class TextTriggers:
             pydirectinput.press(key)
 
         elif action == "click_at":
-            # coords relative to Roblox window
+            # Absolute pixel coords relative to Roblox window
             x_win = params.get("x", 0)
             y_win = params.get("y", 0)
+            click_at(roblox_region["left"] + x_win,
+                     roblox_region["top"] + y_win)
+
+        elif action == "click_at_frac":
+            # Fractional coords 0.0-1.0 relative to Roblox window — resolution-independent
+            x_frac = params.get("x", 0.5)
+            y_frac = params.get("y", 0.5)
+            x_win = int(x_frac * roblox_region["width"])
+            y_win = int(y_frac * roblox_region["height"])
             click_at(roblox_region["left"] + x_win,
                      roblox_region["top"] + y_win)
 
@@ -112,5 +121,10 @@ class TextTriggers:
                     click_at(roblox_region["left"] + int(cx),
                              roblox_region["top"] + int(cy))
                     return
+
+        elif action == "noop":
+            # Detected but nothing to do (e.g., "server closing")
+            pass
+
         else:
             print(f"[text-triggers] unknown action '{action}' — ignoring")
