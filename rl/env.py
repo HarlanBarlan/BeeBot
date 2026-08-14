@@ -317,17 +317,8 @@ class BSSEnv(gym.Env):
         elif (self._step_count - self._stalled_since_step > STALL_STEPS_BEFORE_DIALOGUE_CLICK
               and self._step_count - self._last_rescue_click_step > DIALOGUE_CLICK_INTERVAL_STEPS
               and self._region is not None):
-            # Click at center of the Roblox window
-            cx = self._region["left"] + self._region["width"] // 2
-            cy = self._region["top"] + self._region["height"] // 2
-            move_mouse(cx, cy)
-            time.sleep(0.03)
-            pydirectinput.mouseDown(button="left")
-            time.sleep(0.04)
-            pydirectinput.mouseUp(button="left")
+            self._try_dialogue_rescue_click(obs=None)
             self._last_rescue_click_step = self._step_count
-            if self._step_count % 300 < 30:  # avoid log spam
-                print(f"[env t={self._step_count}] stall rescue click (stuck {self._step_count - self._stalled_since_step} steps)")
 
         # Periodic human-readable status so you can see progress at a glance
         self._step_count += 1
@@ -497,3 +488,52 @@ class BSSEnv(gym.Env):
             except Exception: pass
         self._held_keys.clear()
         self._held_mouse.clear()
+
+    def _try_dialogue_rescue_click(self, obs=None):
+        """When bot's been stalled long enough that we suspect it's stuck in
+        a bear dialogue, template-match on the 'click to continue' text and
+        click that spot to advance the dialogue.
+
+        User snips the template once: `snip_template.py bridges/probes/dialogue_continue`
+        while a dialogue is open. Template should be tight around the "click
+        to continue" text or similar dialogue-advance element.
+
+        If template file is missing, prints a helpful note (once) and skips.
+        """
+        template_path = Path(__file__).parent.parent / "bridges" / "probes" / "dialogue_continue.png"
+        if not template_path.exists():
+            if not getattr(self, "_dialogue_template_warned", False):
+                print(f"[env] stall rescue skipped — no dialogue template at {template_path}. "
+                      f"Snip one with: snip_template.py bridges/probes/dialogue_continue")
+                self._dialogue_template_warned = True
+            return
+
+        template = cv2.imread(str(template_path))
+        if template is None:
+            return
+        th, tw = template.shape[:2]
+
+        # Grab current frame (small overhead, only fires on stall)
+        try:
+            shot = self._sct.grab(self._region)
+            frame = np.array(shot)[:, :, :3]
+        except Exception:
+            return
+
+        result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val < 0.65:
+            # No dialogue visible — don't click randomly. Bot is stuck on
+            # something else (wall, weird visual state); RL learns from that.
+            return
+
+        x, y = max_loc
+        cx = self._region["left"] + x + tw // 2
+        cy = self._region["top"] + y + th // 2
+        move_mouse(cx, cy)
+        time.sleep(0.03)
+        pydirectinput.mouseDown(button="left")
+        time.sleep(0.04)
+        pydirectinput.mouseUp(button="left")
+        print(f"[env t={self._step_count}] dialogue-rescue click at ({cx},{cy}) "
+              f"(match conf {max_val:.2f})")
