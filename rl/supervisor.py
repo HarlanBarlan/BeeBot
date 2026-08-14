@@ -49,8 +49,34 @@ def is_bss_loaded():
     return region["width"] >= 800 and region["height"] >= 600
 
 
+def kill_own_roblox_processes():
+    """Kill Roblox processes owned by the CURRENT user session only.
+    Leaves other users' Roblox alone (won't hurt main account's game
+    when running as Freddy). Fixes the mutex-leftover-from-previous-crash
+    issue that prevents relaunching.
+
+    Filters by StartTime accessibility — Windows only returns StartTime
+    for processes the current user has permission to see fully, which
+    coincides with "our own processes"."""
+    try:
+        import subprocess
+        # Use PowerShell to filter + kill in one shot (Python's psutil could
+        # do this but we don't import it)
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Process | Where-Object { $_.Name -match 'Roblox' -and $_.StartTime -ne $null } | Stop-Process -Force -ErrorAction SilentlyContinue"],
+            timeout=10,
+            check=False,
+        )
+    except Exception as e:
+        print(f"[supervisor] zombie-cleanup failed: {e}")
+
+
 def launch_bss():
     """Launch BSS. Non-blocking.
+
+    Kills own-user zombie Roblox processes first (mutex cleanup), then
+    fires the browser-based launch URL.
 
     Uses the browser-based launch URL rather than the raw `roblox://`
     scheme. Roblox's `roblox://placeID=...` scheme just opens the tray
@@ -60,6 +86,11 @@ def launch_bss():
     package. This is what clicking Play in a browser does.
 
     Falls back to the roblox:// scheme if browser launch fails."""
+
+    # Kill any zombie Roblox owned by us first — a lingering mutex from
+    # a crashed previous launch silently blocks new launches.
+    kill_own_roblox_processes()
+    time.sleep(2)  # give Windows a moment to actually release handles
     web_url = f"https://www.roblox.com/games/start?placeId={BSS_PLACE_ID}"
     scheme_urls = [
         f"roblox://experiences/start?placeId={BSS_PLACE_ID}",
