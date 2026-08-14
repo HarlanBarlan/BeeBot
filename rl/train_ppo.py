@@ -29,7 +29,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 import keyboard as kb_lib
 
 from .env import BSSEnv, release_cursor_clip
-from .policy import BSSCnnFeatures, load_backbone_from_lstm_ckpt
+from .policy import BSSMultiInputFeatures, load_backbone_from_lstm_ckpt
 
 
 class StopOnKeyCallback(BaseCallback):
@@ -73,10 +73,13 @@ def main():
 
     env = BSSEnv()
 
-    # CNN feature extractor from our imitation model's backbone architecture.
-    # Much better at learning from pixel observations than MLP.
+    # Multi-input feature extractor: CNN(image) + MLP(hud scalars) -> concat.
+    # See rl/policy.py docstring for the rationale — TL;DR the value function
+    # can't reliably parse pollen%/honey from downsized pixels while ALSO
+    # fitting sparse reward, so we feed the critic the ground-truth HUD
+    # scalars alongside the pixels.
     policy_kwargs = dict(
-        features_extractor_class=BSSCnnFeatures,
+        features_extractor_class=BSSMultiInputFeatures,
         features_extractor_kwargs=dict(features_dim=512),
     )
 
@@ -90,36 +93,52 @@ def main():
     # If a previous PPO checkpoint exists, RESUME from it (preserves learning
     # across sessions and machines). Otherwise create a fresh PPO and warm-
     # start its CNN backbone from the imitation LSTM.
+    #
+    # IMPORTANT: checkpoints saved before the HUD-in-observation change
+    # (2026-08-14) used a Box observation space and MlpPolicy — those will
+    # fail to load into the new MultiInputPolicy. Rename or delete the old
+    # checkpoint before first run:
+    #   mv models/beebot_ppo_latest.zip models/beebot_ppo_pretraining.zip
+    # A pretraining archive is preserved so we can compare metrics later.
     resume_path = MODELS_DIR / "beebot_ppo_latest.zip"
     if resume_path.exists():
         print(f"[resume] loading existing PPO checkpoint: {resume_path}")
-        model = PPO.load(
-            str(resume_path),
-            env=env,
-            device=device,
-            tensorboard_log=str(LOGS_DIR),
-        )
-        # Keep learning rate / entropy from the checkpoint by default. If
-        # you want to reset those, uncomment:
-        # model.learning_rate = LEARNING_RATE
-        # model.ent_coef = 0.02
-    else:
-        print("[fresh] no PPO checkpoint found — creating new PPO with LSTM warm-start")
+        try:
+            model = PPO.load(
+                str(resume_path),
+                env=env,
+                device=device,
+                tensorboard_log=str(LOGS_DIR),
+            )
+        except (ValueError, RuntimeError, KeyError) as e:
+            # Common cause: obs space changed between checkpoint save and now.
+            # Fall through to fresh-start so training can proceed; the old
+            # checkpoint is preserved on disk for manual recovery.
+            print(f"[resume] CHECKPOINT INCOMPATIBLE with current env "
+                  f"(likely obs-space change): {e}")
+            print(f"[resume] falling back to fresh PPO. If you want to keep the "
+                  f"old checkpoint's learning, rename it now and restart:")
+            print(f"    mv {resume_path} {MODELS_DIR}/beebot_ppo_pretraining.zip")
+            resume_path = None
+    if not resume_path or not resume_path.exists():
+        print("[fresh] creating new PPO with LSTM CNN warm-start")
         model = PPO(
-            "MlpPolicy",                  # MLP head — CNN handled by custom features_extractor
+            "MultiInputPolicy",           # Dict obs {image, hud} -> features extractor
             env,
             policy_kwargs=policy_kwargs,
             learning_rate=LEARNING_RATE,
             n_steps=N_STEPS,
             batch_size=BATCH_SIZE,
-            ent_coef=0.02,                # entropy bonus — encourages exploration
+            ent_coef=0.02,                # entropy bonus — will lower this in a later
+                                          # sequential step once critic is healthy
             verbose=1,
             tensorboard_log=str(LOGS_DIR),
             device=device,
         )
         # Warm-start the CNN backbone from imitation checkpoint if available.
-        # RL policy head still learns from scratch — but the "what does a
-        # flower / hive / mob look like" understanding is inherited.
+        # Only the CNN backbone weights transfer — the HUD MLP, combine layer,
+        # and policy/value heads all start fresh. That's fine: the imitation
+        # model never saw HUD scalars either.
         if WARM_START_CKPT is not None:
             load_backbone_from_lstm_ckpt(model.policy, WARM_START_CKPT)
 

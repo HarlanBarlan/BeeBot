@@ -33,7 +33,9 @@ a hobby-scale Roblox RL bot.
 """
 
 import ctypes
+from collections import deque
 from ctypes import wintypes
+import math
 import time
 from pathlib import Path
 import numpy as np
@@ -154,6 +156,38 @@ N_KEYS = len(ACTION_KEYS)
 N_MOUSE = 2  # [left, right]
 
 
+# --- HUD observation vector ---------------------------------------------------
+# The HUD scalar vector is the second half of the Dict observation. It gives
+# the critic (and policy) ground-truth game state instead of forcing them to
+# visually parse the HUD from downsized pixels — the single biggest lever
+# for fixing sparse-reward value-function fitting (Andrychowicz 2020).
+#
+# Each dim is bounded roughly to [-1, 1] via the normalizers below. When an
+# OCR read is stale or missing, the value is 0 and the *_valid flag is 0 so
+# the policy can learn to distinguish "unknown" from "actually zero".
+#
+# Keep the vector SMALL (~8 dims): our on-policy sample rate is ~5 fps, so
+# over-parameterizing the HUD MLP on many inputs overfits fast.
+
+HUD_DIM = 8
+HUD_INDEX = {
+    "pollen_fill":                0,   # 0..1 (direct)
+    "honey_log_norm":             1,   # log(1+honey) / log(1+HONEY_LOG_CAP), clipped
+    "pollen_delta_60s":           2,   # (pollen_fill_now - pollen_fill_60s_ago), typ [-1,1]
+    "honey_delta_60s_log_norm":   3,   # log(1+Δhoney)/log(1+HONEY_DELTA_LOG_CAP), clipped
+    "time_since_honey_gain":      4,   # clip(sec, 300) / 300
+    "time_since_pollen_change":   5,   # clip(sec, 60) / 60
+    "pollen_valid":               6,   # 1 if OCR read within HUD_STALE_SEC else 0
+    "honey_valid":                7,   # 1 if OCR read within HUD_STALE_SEC else 0
+}
+
+HUD_HISTORY_SECONDS = 60.0           # window over which deltas are computed
+HUD_STALE_SEC = 30.0                 # a read older than this counts as "no data"
+HONEY_LOG_CAP = 1e12                 # 1 trillion honey — endgame ceiling
+HONEY_DELTA_LOG_CAP = 1e10           # 10 billion Δhoney/min — well above any real burst
+POLLEN_CHANGE_EPSILON = 0.005        # fill delta below this doesn't count as "changed"
+
+
 class BSSEnv(gym.Env):
     """Bee Swarm Simulator as a Gym environment."""
 
@@ -161,12 +195,24 @@ class BSSEnv(gym.Env):
 
     def __init__(self):
         super().__init__()
-        # Observation: raw RGB frame at model input resolution
-        self.observation_space = spaces.Box(
-            low=0.0, high=1.0,
-            shape=(3, MODEL_INPUT_H, MODEL_INPUT_W),
-            dtype=np.float32,
-        )
+        # Observation: Dict of pixel frame + scalar HUD vector.
+        # The HUD vector is critical for value-function fitting under sparse
+        # reward — the critic gets ground-truth pollen/honey/rate scalars
+        # instead of having to visually parse HUD text from downsized pixels.
+        self.observation_space = spaces.Dict({
+            "image": spaces.Box(
+                low=0.0, high=1.0,
+                shape=(3, MODEL_INPUT_H, MODEL_INPUT_W),
+                dtype=np.float32,
+            ),
+            # HUD dims are normalized to roughly [-1, 1]; use wider bounds
+            # to avoid clipping if OCR spikes momentarily.
+            "hud": spaces.Box(
+                low=-2.0, high=2.0,
+                shape=(HUD_DIM,),
+                dtype=np.float32,
+            ),
+        })
         # Action: multi-binary for keys + mouse buttons, plus (cursor_x, cursor_y)
         # SB3 needs a single Box; we flatten into a length-(N_KEYS + N_MOUSE + 2) vector
         # where the first N_KEYS+N_MOUSE entries are 0/1 sigmoid outputs and the last 2
@@ -220,6 +266,17 @@ class BSSEnv(gym.Env):
         self._last_seen_honey = None
         self._last_seen_pollen = None
         self._steps_in_episode = 0
+        # HUD history for delta features: rolling buffers of (timestamp, value).
+        # Maxlen sized for HUD_HISTORY_SECONDS at TICK_HZ, doubled for safety.
+        history_maxlen = int(HUD_HISTORY_SECONDS * TICK_HZ * 2)
+        self._pollen_history = deque(maxlen=history_maxlen)
+        self._honey_history = deque(maxlen=history_maxlen)
+        # Wall-clock timestamps of last observed change / gain
+        self._last_pollen_change_ts = None
+        self._last_honey_gain_ts = None
+        # Last OCR-read timestamps (for validity flags)
+        self._last_pollen_read_ts = None
+        self._last_honey_read_ts = None
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -384,6 +441,17 @@ class BSSEnv(gym.Env):
 
     # --- internals ----------------------------------------------------------
 
+    def _empty_observation(self):
+        """Zero-filled observation matching the Dict space — used when
+        Roblox window can't be located (bot is between windows, alt-tabbed,
+        etc.). Returned along with the cached HUD dict."""
+        return {
+            "image": np.zeros(
+                (3, MODEL_INPUT_H, MODEL_INPUT_W), dtype=np.float32
+            ),
+            "hud": np.zeros((HUD_DIM,), dtype=np.float32),
+        }
+
     def _capture(self):
         # Refresh Roblox region only every N steps — pygetwindow.getAllWindows
         # is slow and window rarely moves during training
@@ -392,7 +460,7 @@ class BSSEnv(gym.Env):
                 self._region = get_roblox_region()
             except RuntimeError:
                 time.sleep(0.5)
-                return np.zeros(self.observation_space.shape, dtype=np.float32), self._cached_hud
+                return self._empty_observation(), self._cached_hud
 
         frame = None
         # Try dxcam first (fast, GPU-accelerated)
@@ -430,8 +498,105 @@ class BSSEnv(gym.Env):
         # Downsize + normalize + CHW for observation
         small = cv2.resize(frame, (MODEL_INPUT_W, MODEL_INPUT_H))
         small_rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        obs = np.transpose(small_rgb, (2, 0, 1))
-        return obs, hud
+        img_obs = np.transpose(small_rgb, (2, 0, 1))
+
+        # Update HUD history + compute scalar HUD vector for policy/critic
+        now = time.time()
+        self._update_hud_history(hud, now)
+        hud_vec = self._compute_hud_vector(hud, now)
+
+        return {"image": img_obs, "hud": hud_vec}, hud
+
+    def _update_hud_history(self, hud, now):
+        """Append current HUD values to rolling history + update change/gain
+        timestamps. Called each capture (rate-limited by HUD OCR cadence,
+        which itself is every HUD_READ_EVERY_N_STEPS steps)."""
+        pollen = hud.get("pollen_fill")
+        if pollen is not None:
+            self._pollen_history.append((now, float(pollen)))
+            self._last_pollen_read_ts = now
+            # Update "changed" timestamp only on meaningful change
+            if (self._last_seen_pollen is None
+                    or abs(pollen - self._last_seen_pollen) > POLLEN_CHANGE_EPSILON):
+                self._last_pollen_change_ts = now
+        honey = hud.get("honey")
+        if honey is not None:
+            self._honey_history.append((now, float(honey)))
+            self._last_honey_read_ts = now
+            # Honey only ever increases in normal play; treat any gain as an event
+            if self._last_seen_honey is None or honey > self._last_seen_honey:
+                self._last_honey_gain_ts = now
+
+    def _compute_hud_vector(self, hud, now):
+        """Build the fixed-size HUD scalar vector from cached HUD state +
+        history buffers. Everything is normalized to roughly [-1, 1] and
+        clipped. Missing readings return 0 for the value dim and 0 for the
+        corresponding *_valid flag."""
+        vec = np.zeros((HUD_DIM,), dtype=np.float32)
+
+        pollen = hud.get("pollen_fill")
+        if pollen is not None:
+            vec[HUD_INDEX["pollen_fill"]] = float(np.clip(pollen, 0.0, 1.0))
+
+        honey = hud.get("honey")
+        if honey is not None:
+            honey = max(0.0, float(honey))
+            vec[HUD_INDEX["honey_log_norm"]] = float(np.clip(
+                math.log1p(honey) / math.log1p(HONEY_LOG_CAP), 0.0, 1.0
+            ))
+
+        # Deltas over HUD_HISTORY_SECONDS
+        vec[HUD_INDEX["pollen_delta_60s"]] = self._history_delta(
+            self._pollen_history, now, HUD_HISTORY_SECONDS
+        )
+        honey_delta = self._history_delta(
+            self._honey_history, now, HUD_HISTORY_SECONDS
+        )
+        # Honey delta is huge in magnitude; log-normalize and clip
+        # (drop sign — honey only goes up in normal play; a negative delta
+        # is either OCR noise or a session reset, both of which shouldn't
+        # feed the policy negative "learn to lose honey" signals)
+        honey_delta = max(0.0, honey_delta)
+        vec[HUD_INDEX["honey_delta_60s_log_norm"]] = float(np.clip(
+            math.log1p(honey_delta) / math.log1p(HONEY_DELTA_LOG_CAP), 0.0, 1.0
+        ))
+
+        # Time-since-events, clipped and normalized
+        if self._last_honey_gain_ts is not None:
+            since = min(now - self._last_honey_gain_ts, 300.0)
+            vec[HUD_INDEX["time_since_honey_gain"]] = float(since / 300.0)
+        else:
+            vec[HUD_INDEX["time_since_honey_gain"]] = 1.0   # unknown -> "long time ago"
+        if self._last_pollen_change_ts is not None:
+            since = min(now - self._last_pollen_change_ts, 60.0)
+            vec[HUD_INDEX["time_since_pollen_change"]] = float(since / 60.0)
+        else:
+            vec[HUD_INDEX["time_since_pollen_change"]] = 1.0
+
+        # Validity flags — the policy can learn "if valid=0, ignore this dim"
+        if self._last_pollen_read_ts is not None and now - self._last_pollen_read_ts < HUD_STALE_SEC:
+            vec[HUD_INDEX["pollen_valid"]] = 1.0
+        if self._last_honey_read_ts is not None and now - self._last_honey_read_ts < HUD_STALE_SEC:
+            vec[HUD_INDEX["honey_valid"]] = 1.0
+
+        return vec
+
+    @staticmethod
+    def _history_delta(history, now, window_sec):
+        """Return (latest_value - earliest_value_within_window). If there's
+        no data in the window, returns 0.0."""
+        if not history:
+            return 0.0
+        latest_ts, latest_val = history[-1]
+        # Find earliest entry within the window
+        earliest_val = None
+        for ts, val in history:
+            if now - ts <= window_sec:
+                earliest_val = val
+                break
+        if earliest_val is None:
+            return 0.0
+        return latest_val - earliest_val
 
     def _apply_action(self, action):
         # Split action vector
