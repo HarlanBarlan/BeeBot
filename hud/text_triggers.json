@@ -18,10 +18,6 @@
     {"phrase": "click to continue", "action": "click_at_match", "cooldown_sec": 3},
     {"phrase": "press enter to continue", "action": "press_key", "params": {"key": "enter"}, "cooldown_sec": 3},
     {"phrase": "press e to", "action": "press_key", "params": {"key": "e"}, "cooldown_sec": 3},
-    {"phrase": "would you like to accept", "action": "press_key", "params": {"key": "e"}, "cooldown_sec": 5},
     {"phrase": "close", "action": "click_at_match", "cooldown_sec": 10},
-    {"phrase": "age verification", "action": "click_at_frac", "params": {"x": 0.9, "y": 0.85}, "cooldown_sec": 30},
-    {"phrase": "chat with your friends", "action": "click_at_frac", "params": {"x": 0.9, "y": 0.85}, "cooldown_sec": 60},
-    {"phrase": "server closing", "action": "noop", "cooldown_sec": 60}
   ]
 }
