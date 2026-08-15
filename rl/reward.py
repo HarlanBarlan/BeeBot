@@ -70,13 +70,27 @@ class MultiTimescaleReward:
 
     # Persistence-based baseline recovery for honey drops.
     # Old logic: any delta > MAX_HONEY_DELTA_PER_TICK gets rejected forever,
-    # so a legitimate honey drop (buying gear, dying, session-hop) permanently
-    # broke the reward function's baseline. New logic: still reject the first
-    # few large deltas (protects vs single-frame OCR spikes), but after
-    # OUTLIER_ACCEPT_AFTER_N consecutive same-direction rejects, force-accept
-    # and re-baseline. Handles real state changes (~1 sec of confusion) while
-    # still filtering true OCR noise (which is single-frame or bidirectional).
-    OUTLIER_ACCEPT_AFTER_N = 5
+    # so a legitimate honey drop (buying gear, session-hop) permanently broke
+    # the reward function's baseline. (Death does NOT drop honey — only bag
+    # pollen — so death isn't relevant to this path; user-corrected 2026-08-14.)
+    # New logic: still reject the first N large deltas (protects vs OCR
+    # noise), but after OUTLIER_ACCEPT_AFTER_N consecutive same-direction
+    # rejects, force-accept and re-baseline.
+    #
+    # Bumped from 5 to 15 on 2026-08-14 after seeing OCR produce SYSTEMATIC
+    # persistent misreads (5-10 consecutive frames all misreading 3.2M as
+    # 32M) that caused ping-pong re-baselines and reward corruption.
+    # 15 consecutive means ~30 sec at 5 fps of the same wrong reading —
+    # that's a strong signal it's real. Legitimate spending events last
+    # longer than 30 sec of honey-being-lower, so still handled.
+    OUTLIER_ACCEPT_AFTER_N = 15
+
+    # Cooldown between re-baseline events. If we JUST re-baselined and
+    # another opposite-direction re-baseline wants to fire, that's the
+    # classic OCR-bounce pattern (persistent misread creates one baseline,
+    # then real values look like huge deltas creating another). Enforce a
+    # 60-second gap so the ping-pong can't happen.
+    REBASELINE_COOLDOWN_SEC = 60.0
 
     # Decimal-shift / comma-drop / partial-parse OCR errors are the most
     # common failure modes for honey OCR:
@@ -109,9 +123,12 @@ class MultiTimescaleReward:
         self.last_potential = None
         self.total_reward_this_episode = 0.0
         # Counters for the persistence-based outlier recovery — one for each
-        # direction so we don't confuse "5 negative in a row" with "3 neg + 2 pos"
+        # direction so we don't confuse "N negative in a row" with mixed.
         self._consecutive_neg_outliers = 0
         self._consecutive_pos_outliers = 0
+        # Wall-clock timestamp of the last re-baseline event, used to enforce
+        # REBASELINE_COOLDOWN_SEC and prevent OCR-bounce ping-pong.
+        self._last_rebaseline_ts = None
 
     def reset(self):
         self.honey_history.clear()
@@ -125,6 +142,9 @@ class MultiTimescaleReward:
         self.total_reward_this_episode = 0.0
         self._consecutive_neg_outliers = 0
         self._consecutive_pos_outliers = 0
+        # Keep rebaseline cooldown across artificial episode boundaries so
+        # ping-pong protection isn't reset every 1024 steps.
+        # (self._last_rebaseline_ts intentionally NOT reset here.)
 
     def _honey_delta_over(self, seconds):
         """Estimated Δhoney over the last `seconds`."""
@@ -177,34 +197,54 @@ class MultiTimescaleReward:
                 return 0.0
             if abs(raw_delta) > self.MAX_HONEY_DELTA_PER_TICK:
                 # Large delta but not a decimal-shift. Might be real
-                # (spending / death / big convert burst) or might be OCR
-                # noise. Increment same-direction counter; if we hit N in
-                # a row, accept it as a real state change.
+                # (spending / big convert burst / session-hop snapshot) or
+                # might be OCR noise. Increment same-direction counter;
+                # if we hit N in a row, POSSIBLY accept it as a real state
+                # change (unless within cooldown of last re-baseline).
                 if raw_delta < 0:
                     self._consecutive_neg_outliers += 1
                     self._consecutive_pos_outliers = 0
-                    if self._consecutive_neg_outliers >= self.OUTLIER_ACCEPT_AFTER_N:
-                        print(f"[reward] accepting large NEG delta after "
-                              f"{self.OUTLIER_ACCEPT_AFTER_N} consecutive reads: "
-                              f"honey {self.last_honey:,.0f} -> {honey:,.0f} "
-                              f"(likely spending or death — re-baselining)")
-                        self._consecutive_neg_outliers = 0
-                        # Fall through — update baseline, but zero the
-                        # reward contribution (bot shouldn't be rewarded
-                        # or punished for detected spending events).
-                    else:
-                        return 0.0
+                    direction, counter = "NEG", self._consecutive_neg_outliers
+                    hint = "likely spending"
                 else:
                     self._consecutive_pos_outliers += 1
                     self._consecutive_neg_outliers = 0
-                    if self._consecutive_pos_outliers >= self.OUTLIER_ACCEPT_AFTER_N:
-                        print(f"[reward] accepting large POS delta after "
-                              f"{self.OUTLIER_ACCEPT_AFTER_N} consecutive reads: "
-                              f"honey {self.last_honey:,.0f} -> {honey:,.0f} "
-                              f"(likely session-hop / snapshot — re-baselining)")
-                        self._consecutive_pos_outliers = 0
+                    direction, counter = "POS", self._consecutive_pos_outliers
+                    hint = "likely session-hop / snapshot"
+
+                if counter < self.OUTLIER_ACCEPT_AFTER_N:
+                    return 0.0
+
+                # Counter hit the threshold — check the ping-pong cooldown
+                # before actually re-baselining. If we JUST re-baselined,
+                # this is almost certainly the OCR-bounce pattern (5-15
+                # persistent misreads created one baseline, real values
+                # coming back look like huge opposite-direction deltas).
+                if (self._last_rebaseline_ts is not None
+                        and now - self._last_rebaseline_ts < self.REBASELINE_COOLDOWN_SEC):
+                    # Reject and RESET the counter so it needs another full
+                    # N same-direction reads to try again. This anchors us
+                    # to the earlier baseline and starves the ping-pong.
+                    print(f"[reward] {direction} delta hit threshold but "
+                          f"REJECTED — within cooldown of last re-baseline "
+                          f"({now - self._last_rebaseline_ts:.1f}s ago). "
+                          f"Suspecting OCR bounce, not real state change.")
+                    if raw_delta < 0:
+                        self._consecutive_neg_outliers = 0
                     else:
-                        return 0.0
+                        self._consecutive_pos_outliers = 0
+                    return 0.0
+
+                # Cooldown passed — accept as real state change
+                print(f"[reward] accepting large {direction} delta after "
+                      f"{self.OUTLIER_ACCEPT_AFTER_N} consecutive reads: "
+                      f"honey {self.last_honey:,.0f} -> {honey:,.0f} "
+                      f"({hint} — re-baselining)")
+                if raw_delta < 0:
+                    self._consecutive_neg_outliers = 0
+                else:
+                    self._consecutive_pos_outliers = 0
+                self._last_rebaseline_ts = now
                 # After accepting a big delta, treat it as a full re-baseline:
                 # - Update last_honey to the new value
                 # - CLEAR honey_history so rolling minute/hour deltas don't
