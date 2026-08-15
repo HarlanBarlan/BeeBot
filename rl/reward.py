@@ -68,6 +68,25 @@ class MultiTimescaleReward:
     PBRS_SCALE = 1.0
     PBRS_GAMMA = 0.99
 
+    # Persistence-based baseline recovery for honey drops.
+    # Old logic: any delta > MAX_HONEY_DELTA_PER_TICK gets rejected forever,
+    # so a legitimate honey drop (buying gear, dying, session-hop) permanently
+    # broke the reward function's baseline. New logic: still reject the first
+    # few large deltas (protects vs single-frame OCR spikes), but after
+    # OUTLIER_ACCEPT_AFTER_N consecutive same-direction rejects, force-accept
+    # and re-baseline. Handles real state changes (~1 sec of confusion) while
+    # still filtering true OCR noise (which is single-frame or bidirectional).
+    OUTLIER_ACCEPT_AFTER_N = 5
+
+    # Decimal-shift OCR errors are the most common failure mode for honey OCR
+    # (2.87M mis-read as 28.7M because a comma looks like a period). If a
+    # reading is 8-12x or 0.08-0.12x the previous stable reading, it's almost
+    # certainly a decimal-shift error, not a real event.
+    DECIMAL_SHIFT_RATIO_LOW = 0.08
+    DECIMAL_SHIFT_RATIO_HIGH = 0.12
+    DECIMAL_SHIFT_RATIO_LOW_10X = 8.0
+    DECIMAL_SHIFT_RATIO_HIGH_10X = 12.0
+
     def __init__(self):
         self.honey_history = deque(maxlen=36000)  # (ts, honey) pairs; ~1 hour at 10 FPS
         self.last_honey = None
@@ -77,6 +96,10 @@ class MultiTimescaleReward:
         # so first step after reset gets F=0 (no phantom shaping spike).
         self.last_potential = None
         self.total_reward_this_episode = 0.0
+        # Counters for the persistence-based outlier recovery — one for each
+        # direction so we don't confuse "5 negative in a row" with "3 neg + 2 pos"
+        self._consecutive_neg_outliers = 0
+        self._consecutive_pos_outliers = 0
 
     def reset(self):
         self.honey_history.clear()
@@ -88,6 +111,8 @@ class MultiTimescaleReward:
         # from whatever the last-episode bag state happened to be.
         self.last_potential = None
         self.total_reward_this_episode = 0.0
+        self._consecutive_neg_outliers = 0
+        self._consecutive_pos_outliers = 0
 
     def _honey_delta_over(self, seconds):
         """Estimated Δhoney over the last `seconds`."""
@@ -111,23 +136,88 @@ class MultiTimescaleReward:
             # No reading this tick — return small negative to punish 'blind' states
             return -0.01
 
-        # OCR outlier protection: reject readings with impossibly-large jumps.
-        # (Legitimate honey gains are capped at hive-conversion rate — a
-        # SINGLE tick jumping by hundreds of thousands is always OCR error.)
-        if self.last_honey is not None:
+        # OCR outlier protection with persistence-based baseline recovery.
+        #
+        # Old logic: any delta > MAX_HONEY_DELTA_PER_TICK gets rejected
+        # forever. That works for OCR noise but permanently breaks the
+        # baseline on REAL state changes (spending honey, dying, etc.).
+        #
+        # New logic:
+        # 1. Decimal-shift errors (8-12x or 0.08-0.12x jumps) are ALWAYS
+        #    rejected — that's the most common honey-OCR failure mode and
+        #    real events never look like that.
+        # 2. Other large deltas get rejected initially but a same-direction
+        #    counter increments. After OUTLIER_ACCEPT_AFTER_N consecutive
+        #    rejects in the same direction, we accept the reading as real
+        #    and force-update the baseline. Handles legitimate spending /
+        #    death events with ~1 sec of confusion, then resumes normal
+        #    tracking.
+        if self.last_honey is not None and self.last_honey > 0:
             raw_delta = honey - self.last_honey
-            if abs(raw_delta) > self.MAX_HONEY_DELTA_PER_TICK:
-                # Keep old honey value, don't log this reading — return small
-                # neutral reward so we don't move on bad data
+            ratio = honey / self.last_honey
+            is_decimal_shift = (
+                (self.DECIMAL_SHIFT_RATIO_LOW_10X <= ratio <= self.DECIMAL_SHIFT_RATIO_HIGH_10X)
+                or (self.DECIMAL_SHIFT_RATIO_LOW <= ratio <= self.DECIMAL_SHIFT_RATIO_HIGH)
+            )
+            if is_decimal_shift:
+                # Almost certainly OCR decimal-shift error — never real.
+                # Reject WITHOUT incrementing persistence counters so a
+                # streak of decimal-shift errors doesn't force a baseline reset.
                 return 0.0
+            if abs(raw_delta) > self.MAX_HONEY_DELTA_PER_TICK:
+                # Large delta but not a decimal-shift. Might be real
+                # (spending / death / big convert burst) or might be OCR
+                # noise. Increment same-direction counter; if we hit N in
+                # a row, accept it as a real state change.
+                if raw_delta < 0:
+                    self._consecutive_neg_outliers += 1
+                    self._consecutive_pos_outliers = 0
+                    if self._consecutive_neg_outliers >= self.OUTLIER_ACCEPT_AFTER_N:
+                        print(f"[reward] accepting large NEG delta after "
+                              f"{self.OUTLIER_ACCEPT_AFTER_N} consecutive reads: "
+                              f"honey {self.last_honey:,.0f} -> {honey:,.0f} "
+                              f"(likely spending or death — re-baselining)")
+                        self._consecutive_neg_outliers = 0
+                        # Fall through — update baseline, but zero the
+                        # reward contribution (bot shouldn't be rewarded
+                        # or punished for detected spending events).
+                    else:
+                        return 0.0
+                else:
+                    self._consecutive_pos_outliers += 1
+                    self._consecutive_neg_outliers = 0
+                    if self._consecutive_pos_outliers >= self.OUTLIER_ACCEPT_AFTER_N:
+                        print(f"[reward] accepting large POS delta after "
+                              f"{self.OUTLIER_ACCEPT_AFTER_N} consecutive reads: "
+                              f"honey {self.last_honey:,.0f} -> {honey:,.0f} "
+                              f"(likely session-hop / snapshot — re-baselining)")
+                        self._consecutive_pos_outliers = 0
+                    else:
+                        return 0.0
+                # After accepting a big delta, treat it as a re-baseline
+                # event: update last_honey but don't count it in delta_tick
+                # (that reward would be enormous and meaningless).
+                self.last_honey = honey
+                self.honey_history.append((now, honey))
+                return 0.0
+            else:
+                # Normal-sized delta — reset outlier counters (streak broken)
+                self._consecutive_neg_outliers = 0
+                self._consecutive_pos_outliers = 0
 
         # Log the honey reading with timestamp
         self.honey_history.append((now, honey))
 
-        # Δhoney over three windows
+        # Δhoney over three windows. Clamp all to non-negative — honey CAN
+        # go down (spending, session-hop) and we don't want to punish the
+        # bot for its own strategic spending decisions. Lost honey shows up
+        # as absence-of-reward via opportunity cost, not direct penalty.
+        # (This is important for the "almost pure RL" vision — see
+        # [[feedback-beebot-pure-rl-vision]] — bot must be free to discover
+        # spending strategies without the reward function fighting it.)
         delta_tick = 0.0 if self.last_honey is None else max(0.0, honey - self.last_honey)
-        delta_minute = self._honey_delta_over(60)
-        delta_hour = self._honey_delta_over(3600)
+        delta_minute = max(0.0, self._honey_delta_over(60))
+        delta_hour = max(0.0, self._honey_delta_over(3600))
 
         # Stall detection — track PROGRESS which is EITHER honey up OR pollen
         # bar fill going up. This way farming (pollen up, no honey change) OR
@@ -161,7 +251,11 @@ class MultiTimescaleReward:
         # doesn't see a phantom drop-to-zero.
         pbrs_shaping = 0.0
         if pollen_fill is not None:
-            current_potential = pollen_fill * self.PBRS_SCALE
+            # Clamp pollen_fill to [0, 1] — OCR occasionally reads garbage
+            # like 147% (seen at t=11400 in the 2026-08-14 log). Without
+            # clamping this creates a massive spurious PBRS spike.
+            clamped_fill = max(0.0, min(1.0, pollen_fill))
+            current_potential = clamped_fill * self.PBRS_SCALE
             if self.last_potential is not None:
                 pbrs_shaping = self.PBRS_GAMMA * current_potential - self.last_potential
             self.last_potential = current_potential
