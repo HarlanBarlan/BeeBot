@@ -103,6 +103,7 @@ from roblox_window import get_roblox_region
 from robo_input import move_mouse
 from dataset import MODEL_INPUT_W, MODEL_INPUT_H, GAME_RELEVANT_KEYS
 from hud.reader import HudReader
+from hud.popup_handler import PopupHandler
 try:
     from hud.text_triggers import TextTriggers
     _text_triggers_available = True
@@ -151,6 +152,26 @@ QUEST_READ_EVERY_N_STEPS = 50
 # every 25 steps (~5 sec) — buffs can appear/expire within seconds so
 # faster than quest but slower than pollen/honey.
 BUFF_READ_EVERY_N_STEPS = 25
+
+# Intrusive-popup handler (age dialog, Roblox notifications, etc). Runs
+# fast template match every N steps. When a popup is detected, immediately
+# click its dismiss button — DON'T wait for stall detection (the popup
+# blocks farming and every second is training-time waste).
+#
+# Templates live in hud/probes/:
+#   popup_<name>.png        — detector (any stable visual of the popup)
+#   popup_<name>_close.png  — click target (the X or Cancel button)
+# Handler pairs them by filename prefix. If both exist for <name>, the
+# popup is watched. If either is missing, that popup is skipped.
+#
+# Deliberately philosophically distinct from dialogue rescue:
+#   - Dialogue rescue = "bot got stuck in an unfamiliar dialogue, try to
+#     click something to break out" (bear NPCs, unknown UI, etc)
+#   - Popup handler = "known intrusive Roblox-level modal that's not
+#     game strategy — dismiss immediately"
+# Age dialog dismissal isn't teaching strategy; it's the same category
+# as ClipCursor and dxcam plumbing.
+POPUP_CHECK_EVERY_N_STEPS = 15   # ~3 sec at 5 fps
 
 # Rate-limit window lookup — pygetwindow enumerates ALL system windows every
 # call (~100-500ms on a busy machine). Roblox window rarely moves. Cache
@@ -313,6 +334,14 @@ class BSSEnv(gym.Env):
         self._sct = mss.MSS()      # always available as fallback
 
         self._hud = HudReader()
+        # Popup handler — auto-dismisses known intrusive Roblox popups
+        # (age dialog, purchase confirmations, etc). Doesn't need any
+        # templates to be present; loads whatever popup_*.png pairs exist.
+        self._popup_handler = PopupHandler()
+        if self._popup_handler.is_ready():
+            print(f"[env] popup handler loaded with "
+                  f"{len(self._popup_handler.popups)} popup type(s): "
+                  f"{[p['name'] for p in self._popup_handler.popups]}")
         # Text-trigger popup dismissal — auto-escapes known dialogs so bot
         # doesn't spend hours stuck in a quest screen.
         # Optional: if hud/text_triggers.py isn't present, feature is skipped.
@@ -620,6 +649,16 @@ class BSSEnv(gym.Env):
             new_buffs = self._hud.read_buffs(frame.copy())
             if new_buffs:
                 self._cached_hud.update(new_buffs)
+        # Popup check — every N steps, look for known intrusive modals
+        # (age dialog, purchase confirmations) and click their dismiss
+        # button immediately. Runs BEFORE dialogue rescue's stall-gated
+        # logic so we don't waste 60+ sec letting the popup block farming.
+        if (self._step_count % POPUP_CHECK_EVERY_N_STEPS == 0
+                and self._popup_handler.is_ready()
+                and self._region is not None
+                and not self._paused):
+            self._popup_handler.check_and_dismiss(
+                frame, self._region, self._popup_click)
         hud = self._cached_hud
 
         # Downsize + normalize + CHW for observation
@@ -849,6 +888,24 @@ class BSSEnv(gym.Env):
             except Exception: pass
         self._held_keys.clear()
         self._held_mouse.clear()
+
+    def _popup_click(self, screen_x, screen_y):
+        """Helper for PopupHandler — burst-click at (screen_x, screen_y).
+        Small burst because most Roblox popups just need one click, but
+        confirmation chains sometimes need 2-3. Also releases E key first
+        in case bot was holding it (E often opens the same popups)."""
+        if "e" in self._held_keys:
+            try: pydirectinput.keyUp("e")
+            except Exception: pass
+            self._held_keys.discard("e")
+        move_mouse(screen_x, screen_y)
+        time.sleep(0.03)
+        from hud.popup_handler import DISMISS_CLICK_BURST
+        for _ in range(DISMISS_CLICK_BURST):
+            pydirectinput.mouseDown(button="left")
+            time.sleep(0.03)
+            pydirectinput.mouseUp(button="left")
+            time.sleep(0.03)
 
     def _try_dialogue_rescue_click(self, obs=None):
         """When bot's been stalled long enough that we suspect it's stuck in
