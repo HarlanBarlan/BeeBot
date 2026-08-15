@@ -246,6 +246,29 @@ Multi-step story:
 
 ---
 
+### 2026-08-15: Bulk-fetched buff icon templates from wiki
+
+**Motivation:** manually snipping ~40 buff templates per-buff-encountered is tedious. Wiki has all buff icons on the Buffs & Debuffs page. Automate the download.
+
+**Approach — MediaWiki API:**
+- Fandom's regular wiki HTML endpoint returns HTTP 403 to programmatic fetches even with browser User-Agent (Cloudflare/anti-bot)
+- Fandom's MediaWiki `api.php` endpoint accepts programmatic requests and responds fine
+- Script `scripts/fetch_wiki_buff_icons.py`:
+  1. Uses `action=parse&prop=images` to list all images on the Buffs & Debuffs page (84 images total)
+  2. Uses `action=query&prop=imageinfo` in batches of 50 to resolve each image to its CDN URL + dimensions
+  3. Filters: skip too-big (>1024px), too-small (<16px), non-square-ish (aspect ratio >2.5), and screenshots/wiki-chrome (regex on filename)
+  4. Downloads remaining to `hud/probes/buff_<slug>.png`
+
+**Result:** 80 buff templates downloaded, including all the core game buffs (Haste, Focus, Rage, Melody, Boost, Science Enhancement, etc.).
+
+**Gotcha caught during dev:** MediaWiki normalizes titles (underscores → spaces) between request and response. My initial code keyed the result dict by the returned title, so lookups from the original underscore-form filenames all missed. Fix: use the `normalized` field in the API response to map returned titles back to the original request form.
+
+**Scale mismatch:** wiki icons are 120-225px, in-game buff icons are ~40-60px. Added multi-scale template matching to `BuffClassifier` (tries scales 0.2-1.0). Slower but necessary for wiki-sourced templates. If user later snips their own templates at in-game size, the 1.0 scale hits immediately.
+
+**Publishable insight for paper:** wiki-sourced templates give a substantial cold-start for buff detection without manual snipping. Roblox games with active Fandom wikis have this data source available; other RL-in-commercial-games work should exploit similar sources when they exist.
+
+---
+
 ### 2026-08-15: Buff icon classifier (MVP)
 
 **Motivation:** buffs are a real strategic signal — bots at midgame need to correlate buff-active windows with better farming outcomes. Adding buffs to the observation lets the RL policy learn buff-aware behavior (harvest more aggressively during Field Boost, etc.).

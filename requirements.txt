@@ -52,6 +52,8 @@ python-bidi==0.6.11
 python-dateutil==2.9.0.post0
 pytweening==1.2.0
 PyYAML==6.0.3
+requests==2.34.2
+beautifulsoup4==4.15.0
 rich==15.0.0
 sb3_contrib==2.9.0
 scikit-image==0.26.0

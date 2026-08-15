@@ -45,6 +45,14 @@ PROBE_DIR = Path(__file__).parent / "probes"
 # overlay text.
 CONFIDENCE_THRESHOLD = 0.55
 
+# Multi-scale template matching. Wiki-sourced buff icons are 120-225px but
+# in-game icons render at ~40-60px. We try each template at multiple scales
+# and take the best-confidence match across all scales. Slower than single-
+# scale but necessary for wiki-fetched templates. If user snips their own
+# templates at in-game size, the 1.0 scale will match immediately and the
+# other scales still get tried but don't hurt.
+TEMPLATE_SCALES = [0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.75, 1.0]
+
 # Approximate buff strip region relative to full frame. User can override
 # via a hud/probes/buff_strip_region.png template snip — if present, we
 # template-match to find the strip's location dynamically. Otherwise fall
@@ -130,17 +138,33 @@ class BuffClassifier:
 
         found = []
         for name, template in self.templates.items():
-            th, tw = template.shape[:2]
-            if th > strip.shape[0] or tw > strip.shape[1]:
-                # Template bigger than strip — snipping mismatch
-                continue
-            result = cv2.matchTemplate(strip, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
-            if max_val < CONFIDENCE_THRESHOLD:
+            # Multi-scale template match — try each scale, keep the best
+            # confidence + location across all of them.
+            best_val = -1.0
+            best_loc = None
+            best_th = best_tw = 0
+            for scale in TEMPLATE_SCALES:
+                th_s = max(8, int(template.shape[0] * scale))
+                tw_s = max(8, int(template.shape[1] * scale))
+                if th_s > strip.shape[0] or tw_s > strip.shape[1]:
+                    continue
+                scaled = cv2.resize(template, (tw_s, th_s),
+                                    interpolation=cv2.INTER_AREA
+                                    if scale < 1.0 else cv2.INTER_LINEAR)
+                result = cv2.matchTemplate(strip, scaled, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if max_val > best_val:
+                    best_val = max_val
+                    best_loc = max_loc
+                    best_th, best_tw = th_s, tw_s
+            if best_val < CONFIDENCE_THRESHOLD:
                 continue
             # Match found — extract stack count from region below the icon
             # (BSS displays "xN" as an overlay near the bottom-right of icon)
-            mx, my = max_loc
+            mx, my = best_loc
+            tw = best_tw
+            th = best_th
+            max_val = best_val
             # OCR region: bottom-right corner of matched icon + a bit beyond
             ocr_x1 = mx + tw // 2
             ocr_y1 = my + th // 2
