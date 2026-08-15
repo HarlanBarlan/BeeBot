@@ -55,6 +55,32 @@ New-Item -ItemType Directory -Path C:\Users\harla\OneDrive\BeeBotLogs -Force | O
 ```
 Uses single quotes inside `.ToString(...)` to avoid nested double-quote issues.
 
+### RDP session (Freddy user) can't write to `C:\Users\harla\OneDrive`
+Different Windows users can't write into each other's profile folders. If you're in the Freddy RDP session, use one of these instead:
+
+**Option A — save log locally in the project folder** (simplest, works everywhere):
+```powershell
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+.\.venv-rdp\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "training_$stamp.txt"
+```
+Since `C:\ClaudeWorkspace\` is a shared location on the machine, both your `harla` main user AND the `Freddy` RDP user can read the file.
+
+**Option B — save to Freddy's own OneDrive** (if signed in on that session):
+```powershell
+Test-Path C:\Users\Freddy\OneDrive   # verify Freddy has OneDrive set up
+# If True:
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+.\.venv-rdp\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "C:\Users\Freddy\OneDrive\BeeBotLogs\training_$stamp.txt"
+```
+
+**Option C — save to Public folder** (writable by all Windows users):
+```powershell
+New-Item -ItemType Directory -Path C:\Users\Public\BeeBotLogs -Force | Out-Null
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+.\.venv-rdp\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "C:\Users\Public\BeeBotLogs\training_$stamp.txt"
+```
+Then from your main user session, copy that folder into your OneDrive if you want mobile/other-device access.
+
 ### PowerShell Get-Date format gotcha
 Case-sensitive tokens — easy to get wrong:
 - `MM` = Month (e.g., `08`)
