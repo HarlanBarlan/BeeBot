@@ -64,9 +64,15 @@ class _RECT(ctypes.Structure):
 # - In borderless mode this avoids Roblox's top-bar dropdown that appears when
 #   the mouse touches the very top edge (which covers the HUD)
 CURSOR_TOP_EXCLUSION_PX = 50
-# Also exclude a small strip along the bottom (chat bar edges) and sides
-CURSOR_BOTTOM_EXCLUSION_PX = 15
-CURSOR_SIDE_EXCLUSION_PX = 5
+# Bottom + side exclusion zones. Bumped from 5/15 to 30/30 because on
+# multi-monitor setups with DPI scaling, pygetwindow's reported Roblox
+# window coordinates can be a few pixels off from where the OS's ClipCursor
+# actually clips — small errors let the cursor escape to adjacent monitors.
+# Wider exclusion zones give us margin against those coordinate errors
+# without meaningfully reducing the bot's clickable area (a 1920x1080
+# Roblox window still has 1860x1000 = 1.86 megapixels of interactive space).
+CURSOR_BOTTOM_EXCLUSION_PX = 30
+CURSOR_SIDE_EXCLUSION_PX = 30
 
 # Cursor is INCREMENTAL (delta from current position), not absolute.
 # Reason: PPO's Gaussian policy over a Box space samples heavily into the
