@@ -245,44 +245,77 @@ class QuestOCRReader:
         # OCR the panel — EasyOCR handles multi-line automatically
         ocr = _get_ocr()
         results = ocr.readtext(cv2.cvtColor(panel, cv2.COLOR_BGR2RGB))
-        # results = list of (bbox, text, confidence) tuples
+        # results = list of (bbox, text, confidence) tuples where
+        # bbox is [[x1,y1],[x2,y1],[x2,y2],[x1,y2]] (4 corners, panel-relative)
 
-        quests = []
-        for _bbox, text, _text_conf in results:
-            # Try matching progress pattern first (most common)
+        # BSS quest layout: description text is on line ABOVE its progress
+        # line. OCR returns each text region separately, so we have to
+        # associate them ourselves via bounding-box proximity.
+        # Split results into "progress" (contain N/M or Complete!) and
+        # "description" (everything else).
+        progress_entries = []   # list of (bbox_y_center, bbox_x_center, text, current, target, complete)
+        description_entries = []  # list of (bbox_y_center, bbox_x_center, text)
+
+        for bbox, text, _text_conf in results:
+            ys = [p[1] for p in bbox]
+            xs = [p[0] for p in bbox]
+            y_center = (min(ys) + max(ys)) / 2
+            x_center = (min(xs) + max(xs)) / 2
+
             m = PROGRESS_RE.search(text)
             if m:
                 cur_str, cur_suffix, tgt_str, tgt_suffix = m.groups()
                 current = _parse_num(cur_str, cur_suffix)
                 target = _parse_num(tgt_str, tgt_suffix)
                 if current is not None and target is not None and target > 0:
-                    # Quest key = raw text with the progress "N/M" stripped
-                    # out. This is what identifies the SAME quest across
-                    # reads even as its progress changes. Without this
-                    # stripping, reward tracker would see every progress
-                    # update as a new quest and never fire progress reward.
-                    quest_key = _strip_progress(text)
-                    quests.append({
-                        "raw_line": text,
-                        "quest_key": quest_key,
-                        "current": current,
-                        "target": target,
-                        "progress": min(1.0, current / target),
-                        "complete": False,
-                    })
+                    progress_entries.append((y_center, x_center, text, current, target, False))
                 continue
-
-            # Check for "Complete!" marker
             if COMPLETE_RE.search(text):
-                quest_key = _strip_progress(text)
-                quests.append({
-                    "raw_line": text,
-                    "quest_key": quest_key,
-                    "current": None,
-                    "target": None,
-                    "progress": 1.0,
-                    "complete": True,
-                })
+                progress_entries.append((y_center, x_center, text, None, None, True))
+                continue
+            # Not a progress line — treat as candidate description
+            description_entries.append((y_center, x_center, text))
+
+        # For each progress entry, find the description line whose y_center
+        # is CLOSEST (nearby, either above or slightly below) — with
+        # preference for above. Description above ties the quest name to
+        # its progress bar.
+        quests = []
+        for py, px, ptext, current, target, is_complete in progress_entries:
+            best_desc = None
+            best_dist = float("inf")
+            for dy, dx, dtext in description_entries:
+                y_dist = py - dy   # positive if description is above progress
+                # Prefer descriptions above (y_dist > 0), penalize below
+                if y_dist < 0:
+                    weighted = abs(y_dist) * 3
+                else:
+                    weighted = y_dist
+                # Add small penalty for x misalignment (should be similar x range)
+                weighted += abs(px - dx) * 0.5
+                if weighted < best_dist:
+                    best_dist = weighted
+                    best_desc = dtext
+            # Quest key = description text (stable identifier across reads
+            # of the same quest) plus target as tiebreaker for the rare
+            # case two quests share a description ('Collect 60,000 pollen'
+            # for both Cactus and Rose has different desc text so they
+            # don't collide even without the target).
+            quest_key = best_desc.strip() if best_desc else _strip_progress(ptext)
+            if not quest_key:
+                # Fallback: if no description found, use target as key
+                # (still allows delta tracking within a single quest)
+                quest_key = f"target={target}"
+            quests.append({
+                "raw_line": ptext,
+                "description": best_desc,
+                "quest_key": quest_key,
+                "current": current,
+                "target": target,
+                "progress": (1.0 if is_complete else
+                             (min(1.0, current / target) if target else 0.0)),
+                "complete": is_complete,
+            })
 
         return True, quests
 
@@ -370,18 +403,27 @@ if __name__ == "__main__":
         print(f"Quest tab OPEN, {len(quests)} quest lines detected:")
         for i, q in enumerate(quests):
             state = "COMPLETE" if q["complete"] else f"{q['current']:,}/{q['target']:,}"
-            print(f"  [{i}] {state}  |  {q['raw_line']}  |  "
-                  f"progress={q['progress']:.2%}")
+            desc = q.get("description", "(no description found)")
+            print(f"  [{i}] {state}  {q['progress']:>7.2%}  "
+                  f"desc: {desc}  |  raw: {q['raw_line']}")
+            print(f"       quest_key: {q['quest_key']}")
 
-        # Save debug panel image for tuning
+        # Save debug panel image for tuning — bounds depend on detection mode
         debug_dir = Path(__file__).parent / "probes"
         _, _, loc = reader.is_tab_open(frame)
-        x, y = loc
         H, W = frame.shape[:2]
-        panel_x = max(0, x + PANEL_OFFSET_X)
-        panel_y = max(0, y + PANEL_OFFSET_Y)
-        panel_x2 = min(W, x + reader.tw + PANEL_EXTRA_WIDTH)
-        panel_y2 = min(H, y + reader.th + PANEL_EXTRA_HEIGHT)
+        if loc is not None:
+            x, y = loc
+            panel_x = max(0, x + PANEL_OFFSET_X)
+            panel_y = max(0, y + PANEL_OFFSET_Y)
+            panel_x2 = min(W, x + reader.tw + PANEL_EXTRA_WIDTH)
+            panel_y2 = min(H, y + reader.th + PANEL_EXTRA_HEIGHT)
+        else:
+            # Color-based detection — use the same fraction bounds as read_quests
+            panel_x = int(W * COLOR_PANEL_X_START_FRAC)
+            panel_y = int(H * COLOR_PANEL_Y_START_FRAC)
+            panel_x2 = int(W * COLOR_PANEL_X_END_FRAC)
+            panel_y2 = int(H * COLOR_PANEL_Y_END_FRAC)
         panel = frame[panel_y:panel_y2, panel_x:panel_x2]
         cv2.imwrite(str(debug_dir / "debug_quest_panel.png"), panel)
         print(f"Saved debug_quest_panel.png (panel region OCR was run on)")

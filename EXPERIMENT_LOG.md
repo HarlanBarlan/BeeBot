@@ -351,6 +351,47 @@ Long-term strategic decisions + VLM integration.
 
 ---
 
+### 2026-08-15 (evening): quest OCR robustness + buff deferral
+
+**Motivation:** live-testing exposed two problems.
+
+**Quest tab detection scroll-invariance:**
+- User: "works great at very top, but if I scroll it wont detect it"
+- Root cause: single-color detection at 5 fixed sample points. Scroll shifts what's at each pixel — sometimes background, sometimes progress bar, sometimes header.
+- Fix: multi-color family (7 characteristic panel colors including background beige, progress-bar red, progress-bar green, header dark-blue, dividers) checked at 30 sample points. Any pixel matching ANY color counts. 30% match rate threshold. All colors derived from user's real screen samples.
+- Also fixed traceback in __main__ when color-based detection returned loc=None.
+
+**Quest key stability across OCR reads:**
+- User's real OCR output showed `raw_line` values were just the progress numbers (`"0/60,000"`) not the full quest text — EasyOCR splits each text region separately, and description text (`"Collect 60,000 Pollen from the Cactus Field."`) is on a DIFFERENT bounding box from the progress number.
+- Original code used `raw_line - progress` = empty string as quest_key → multiple quests collided on the same empty key → reward function couldn't track deltas.
+- Fix: associate each progress line with the description line ABOVE it via bounding-box proximity. Description text becomes the stable quest_key. Fallback to `target=N` when no description found nearby.
+
+**Buff detection deferred:**
+- Wiki-sourced templates don't match in-game rendering even at 0.82 confidence — different anti-aliasing / effects.
+- User's honest question: "will RL not learn that picking up tokens increases honey?" — YES. Buff observation is only valuable when strategy depends on WHICH buff is active (timing Rage/Focus during boost cycles), which is Phase 4+ territory.
+- Decision: defer buff observation entirely. Infrastructure (BuffClassifier, HUD channels) stays wired up; classifier returns empty until in-game templates are snipped later. Aggregate observation channels report 0-buffs-detected as an honest signal.
+
+**Key paper insight added — quest generalization limitation:**
+
+Almost-pure RL can learn "actions that make counters go up = good" but STRUGGLES with "understand semantic goals stated in natural language". Bot sees quest description text as pixels, not as understandable instructions.
+
+Concretely, with our current design bot CAN learn:
+  - Meta-behavior: "open quest tab periodically → reward pulses"
+  - Statistical: "farming in field X sometimes correlates with progress"
+
+Bot CANNOT learn:
+  - Semantic: "this quest requires Blue Pollen from Clover Field"
+  - Categorical: "Defeat X" quests need combat vs "Collect Y" quests need farming
+  - Meta-state: quest chain progression, bear-specific quest logic
+
+**Bridging the semantic gap requires Phase 5 VLM integration.** For paper: this is a HARD CEILING of pure-RL on natural-language-instruction tasks in commercial games. Publishable as an honest limitation and motivation for hybrid RL+VLM approaches.
+
+**Publishable insight — wiki-template limitation:**
+
+Cold-start template data from wikis provides COVERAGE (many icon types available for free) but poor per-icon MATCH FIDELITY (static wiki uploads vs live game rendering with anti-aliasing/effects). At 0.55 threshold wiki templates give many false positives; at 0.82 threshold they give few true positives. In-game-captured templates are needed for reliable detection. Wiki templates are useful as a REFERENCE / discovery aid, not as production-quality detectors.
+
+---
+
 ## Open questions / to-investigate
 
 - Would RecurrentPPO (LSTM-in-PPO from sb3_contrib) help with temporal action smoothing and hive identification?
