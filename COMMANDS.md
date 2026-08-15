@@ -30,18 +30,39 @@ cd C:\ClaudeWorkspace\BeeBot
 Press `ESC` any time to stop cleanly (saves checkpoint before exiting).
 Hold `F8` to pause the bot mid-training so you can reposition it manually. Release F8 to resume.
 
-### Start training + save log to a timestamped file
+### Start training + save log — SIMPLEST (one file, appends across runs)
 ```powershell
-$timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
-.\.venv\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "training_$timestamp.txt"
+.\.venv\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "training_log.txt" -Append
 ```
 
-### Start training + save log to OneDrive (visible from any device)
+### Start training + save timestamped log
+Note: use dashes between date parts (`HH-mm-ss` not `HHmm`) so PowerShell casing doesn't confuse minutes with months.
 ```powershell
-$timestamp = Get-Date -Format "yyyy-MM-dd_HHmm"
-New-Item -ItemType Directory -Path C:\Users\harla\OneDrive\BeeBotLogs -Force | Out-Null
-.\.venv\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "C:\Users\harla\OneDrive\BeeBotLogs\training_$timestamp.txt"
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+.\.venv\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "training_$stamp.txt"
 ```
+
+### Start training + save timestamped log to OneDrive (visible from any device)
+```powershell
+$stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+New-Item -ItemType Directory -Path C:\Users\harla\OneDrive\BeeBotLogs -Force | Out-Null
+.\.venv\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "C:\Users\harla\OneDrive\BeeBotLogs\training_$stamp.txt"
+```
+
+### All in ONE line (no variable) — if you prefer
+```powershell
+.\.venv\Scripts\python.exe -m rl.train_ppo *>&1 | Tee-Object -FilePath "C:\Users\harla\OneDrive\BeeBotLogs\training_$((Get-Date).ToString('yyyy-MM-dd_HH-mm-ss')).txt"
+```
+Uses single quotes inside `.ToString(...)` to avoid nested double-quote issues.
+
+### PowerShell Get-Date format gotcha
+Case-sensitive tokens — easy to get wrong:
+- `MM` = Month (e.g., `08`)
+- `mm` = Minute (e.g., `45`)
+- `HH` = Hour 24-format (e.g., `21`)
+- `hh` = Hour 12-format (e.g., `09`)
+
+Safest habit: separate every time component with `-` or `_` so a mis-cased letter produces a broken filename instead of the wrong date.
 
 ### View OneDrive log on another device
 ```powershell
