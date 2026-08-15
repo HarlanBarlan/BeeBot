@@ -166,6 +166,15 @@ DIALOGUE_CLICK_INTERVAL_STEPS = 30    # ~3 sec between rescue clicks
 POST_RESCUE_E_SUPPRESS_STEPS = 50     # ~10 sec at 5 fps — enough for the
                                       # policy's WASD to walk the bot out
 
+# How many rapid-fire clicks per rescue firing. BSS bear dialogues have
+# multiple text lines and each click only advances ONE line — a single click
+# per firing leaves the bot stuck in a slow chain. Community consensus:
+# 5-15 clicks per exchange. Bursting through in one shot resolves most
+# dialogues fully instead of doing them one line every 6 seconds.
+DIALOGUE_RESCUE_CLICK_BURST = 10
+DIALOGUE_RESCUE_CLICK_DELAY = 0.05    # seconds between burst clicks
+                                      # (~200ms total for a 10-click burst)
+
 # Only expose game-relevant keys in the action space (matches imitation training)
 ACTION_KEYS = sorted(GAME_RELEVANT_KEYS)
 N_KEYS = len(ACTION_KEYS)
@@ -755,9 +764,14 @@ class BSSEnv(gym.Env):
         cy = self._region["top"] + y + th // 2
         move_mouse(cx, cy)
         time.sleep(0.03)
-        pydirectinput.mouseDown(button="left")
-        time.sleep(0.04)
-        pydirectinput.mouseUp(button="left")
+        # Rapid-fire burst — BSS dialogues have multiple text lines and each
+        # click only advances one line. Burst clicks through the whole chain
+        # in one shot instead of doing it one line every 6 seconds.
+        for _ in range(DIALOGUE_RESCUE_CLICK_BURST):
+            pydirectinput.mouseDown(button="left")
+            time.sleep(DIALOGUE_RESCUE_CLICK_DELAY / 2)
+            pydirectinput.mouseUp(button="left")
+            time.sleep(DIALOGUE_RESCUE_CLICK_DELAY / 2)
         # Force-release E if held, then suppress E for a window so the
         # bot can escape the NPC's proximity before its policy re-presses
         # E and re-opens the dialogue we just closed.
@@ -766,6 +780,6 @@ class BSSEnv(gym.Env):
             except Exception: pass
             self._held_keys.discard("e")
         self._e_suppress_until_step = self._step_count + POST_RESCUE_E_SUPPRESS_STEPS
-        print(f"[env t={self._step_count}] dialogue-rescue click at ({cx},{cy}) "
-              f"(match conf {max_val:.2f}) — E suppressed for "
-              f"{POST_RESCUE_E_SUPPRESS_STEPS} steps")
+        print(f"[env t={self._step_count}] dialogue-rescue: burst {DIALOGUE_RESCUE_CLICK_BURST} "
+              f"clicks at ({cx},{cy}) (match conf {max_val:.2f}) — "
+              f"E suppressed for {POST_RESCUE_E_SUPPRESS_STEPS} steps")
