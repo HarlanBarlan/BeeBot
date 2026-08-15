@@ -146,6 +146,12 @@ HUD_READ_EVERY_N_STEPS = 10
 # tab isn't visible, so most calls return fast anyway.
 QUEST_READ_EVERY_N_STEPS = 50
 
+# Buff classifier runs template match per buff type + OCR per detected
+# match. Cost scales with number of loaded templates. Rate-limited to
+# every 25 steps (~5 sec) — buffs can appear/expire within seconds so
+# faster than quest but slower than pollen/honey.
+BUFF_READ_EVERY_N_STEPS = 25
+
 # Rate-limit window lookup — pygetwindow enumerates ALL system windows every
 # call (~100-500ms on a busy machine). Roblox window rarely moves. Cache
 # for a few seconds between refreshes.
@@ -204,7 +210,7 @@ N_MOUSE = 2  # [left, right]
 # Keep the vector SMALL (~8 dims): our on-policy sample rate is ~5 fps, so
 # over-parameterizing the HUD MLP on many inputs overfits fast.
 
-HUD_DIM = 12
+HUD_DIM = 14
 HUD_INDEX = {
     "pollen_fill":                0,   # 0..1 (direct)
     "honey_log_norm":             1,   # log(1+honey) / log(1+HONEY_LOG_CAP), clipped
@@ -223,9 +229,18 @@ HUD_INDEX = {
     "time_since_quest_tab_seen":  11,  # clip(sec, 300) / 300 — encourages
                                        # bot to open tab (value climbs high
                                        # if bot hasn't checked in a while)
+    # Buff channels (added 2026-08-15). Aggregate signals — specific buff
+    # types not distinguished at MVP (bot must learn buff correlation via
+    # honey rate rather than knowing "haste vs focus"). Adding per-buff
+    # channels is a Phase 4+ improvement.
+    "active_buff_count_norm":     12,  # count / BUFF_COUNT_NORM_MAX, clipped
+    "total_buff_stacks_norm":     13,  # sum of stacks / BUFF_STACKS_NORM_MAX
 }
 QUEST_COUNT_NORM_MAX = 15   # normalize quest counts by this — 15 covers
                             # a typical early/mid game quest load
+BUFF_COUNT_NORM_MAX = 10    # max buffs typically active at once
+BUFF_STACKS_NORM_MAX = 40   # sum of stacks across all buffs (10 Haste stacks
+                            # + 5 Focus + others = around 40 max realistic)
 
 HUD_HISTORY_SECONDS = 60.0           # window over which deltas are computed
 HUD_STALE_SEC = 30.0                 # a read older than this counts as "no data"
@@ -592,6 +607,12 @@ class BSSEnv(gym.Env):
             new_quest = self._hud.read_quest(frame.copy())
             if new_quest:
                 self._cached_hud.update(new_quest)
+        # Buff classifier at yet another cadence — buffs can decay/appear
+        # in seconds so faster than quest but still expensive.
+        if self._step_count % BUFF_READ_EVERY_N_STEPS == 0:
+            new_buffs = self._hud.read_buffs(frame.copy())
+            if new_buffs:
+                self._cached_hud.update(new_buffs)
         hud = self._cached_hud
 
         # Downsize + normalize + CHW for observation
@@ -715,6 +736,16 @@ class BSSEnv(gym.Env):
             vec[HUD_INDEX["time_since_quest_tab_seen"]] = float(since / 300.0)
         else:
             vec[HUD_INDEX["time_since_quest_tab_seen"]] = 1.0   # unknown → far ago
+
+        # Buff scalars — aggregate signals only for MVP
+        buffs = hud.get("buffs", [])
+        vec[HUD_INDEX["active_buff_count_norm"]] = float(np.clip(
+            len(buffs) / BUFF_COUNT_NORM_MAX, 0.0, 1.0
+        ))
+        total_stacks = sum(b.get("stacks", 1) for b in buffs)
+        vec[HUD_INDEX["total_buff_stacks_norm"]] = float(np.clip(
+            total_stacks / BUFF_STACKS_NORM_MAX, 0.0, 1.0
+        ))
 
         return vec
 

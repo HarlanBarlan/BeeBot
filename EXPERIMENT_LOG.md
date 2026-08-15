@@ -246,6 +246,36 @@ Multi-step story:
 
 ---
 
+### 2026-08-15: Buff icon classifier (MVP)
+
+**Motivation:** buffs are a real strategic signal — bots at midgame need to correlate buff-active windows with better farming outcomes. Adding buffs to the observation lets the RL policy learn buff-aware behavior (harvest more aggressively during Field Boost, etc.).
+
+**Approach — same progressive-template pattern as dialogue rescue:**
+- `hud/buff_classifier.py`: BuffClassifier
+- Loads all templates matching `hud/probes/buff_*.png` (glob)
+- For each frame, template-matches each buff type in the top-left buff strip region
+- Nearby OCR extracts stack count ("xN" overlay)
+- Works with 0 templates (returns empty list) OR many — user snips as encountered
+
+**Buff strip location:** top-left of screen, above the row of side-panel icons (egg/quest/bee/badge/settings/robux). User confirmed via screenshot 2026-08-15. Layout uses fixed-ratio defaults with optional `buff_strip_region.png` anchor template for precise dynamic location.
+
+**MVP scope:**
+- Detect PRESENCE + stack count per known buff type
+- Skip time-remaining / duration measurement (deferred to Phase 4+ when strategic decisions need it)
+- Skip specific-buff observation channels — MVP uses aggregate `active_buff_count_norm` + `total_buff_stacks_norm`. RL policy must learn buff correlation via honey rate rather than knowing "haste vs focus" specifically. Aligned with almost-pure-RL vision.
+
+**Observation additions:** `active_buff_count_norm`, `total_buff_stacks_norm` (dims 12-13). HUD_DIM went 12→14.
+
+**Rate limit:** 25 steps (~5 sec) — faster than quest (buffs expire within seconds) but slower than pollen/honey.
+
+**No dedicated reward channel:** bot learns buff value INDIRECTLY via honey rate improvement during buff windows. If bot ends up ignoring token pickups after long training, we can add a small "new buff appeared" reward — but starting minimal per pure-RL vision.
+
+**User must snip templates before this works:** `hud/probes/buff_haste.png`, `buff_focus.png`, `buff_rage.png`, etc. as they encounter each buff type. Working set can grow over time.
+
+**BREAKING:** HUD_DIM changed 12 → 14, obs space shape changed again. Fresh training needed (auto-fallback on checkpoint load).
+
+---
+
 ### 2026-08-15: Quest tracker OCR + progress reward channel
 
 **Motivation:** unlock a new reward signal for quest progress — bot's biggest untapped learning direction. Also add meta-behavior "check quest tab periodically" as an emergent RL target.

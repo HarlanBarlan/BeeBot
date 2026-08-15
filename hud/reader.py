@@ -23,6 +23,7 @@ Planned (stubs):
 from .pollen_ocr import PollenOCRReader
 from .honey_ocr import HoneyOCRReader
 from .quest_ocr import QuestOCRReader
+from .buff_classifier import BuffClassifier
 
 
 class HudReader:
@@ -30,6 +31,7 @@ class HudReader:
         self.pollen = PollenOCRReader()
         self.honey = HoneyOCRReader()
         self.quest = QuestOCRReader()
+        self.buffs = BuffClassifier()
 
     def read(self, frame_bgr):
         """Fast HUD read — pollen + honey (numbers displayed every frame).
@@ -66,12 +68,21 @@ class HudReader:
         tab_open, quests = self.quest.read_quests(frame_bgr)
         return {"quest_tab_open": tab_open, "quests": quests}
 
+    def read_buffs(self, frame_bgr):
+        """Dedicated buff read — expensive (template match per buff type +
+        OCR for stack counts). Env calls at a slower cadence (BUFF_READ_
+        EVERY_N_STEPS). Returns {buffs: list} — empty list if no templates
+        loaded or no buffs active."""
+        return {"buffs": self.buffs.read_buffs(frame_bgr)}
+
     def status(self):
         """Print which detectors are loaded/missing (for setup diagnostics)."""
         print("[hud] detector status:")
-        print(f"  pollen (OCR) : {'READY' if self.pollen.is_ready() else 'MISSING TEMPLATE'}")
-        print(f"  honey (OCR)  : {'READY' if self.honey.is_ready() else 'MISSING TEMPLATE'}")
-        print(f"  quest (OCR)  : {'READY' if self.quest.is_ready() else 'MISSING TEMPLATE (snip hud/probes/quest_tab_indicator.png)'}")
+        print(f"  pollen (OCR)  : {'READY' if self.pollen.is_ready() else 'MISSING TEMPLATE'}")
+        print(f"  honey (OCR)   : {'READY' if self.honey.is_ready() else 'MISSING TEMPLATE'}")
+        print(f"  quest (OCR)   : {'READY' if self.quest.is_ready() else 'MISSING TEMPLATE (snip hud/probes/quest_tab_indicator.png)'}")
+        print(f"  buffs (tmpl)  : {len(self.buffs.templates)} template(s) loaded "
+              f"(snip more via hud/probes/buff_<name>.png)")
 
 
 if __name__ == "__main__":
