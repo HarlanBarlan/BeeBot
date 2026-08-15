@@ -44,6 +44,41 @@ PANEL_OFFSET_Y = -10          # extend a bit above
 PANEL_EXTRA_WIDTH = 400       # width from template's left edge outward
 PANEL_EXTRA_HEIGHT = 900      # panel extends this far down from template
 
+# ---------------------------------------------------------------------------
+# Alternative detection: color-based panel-open check.
+#
+# Template matching fails when the panel has NO stable visual elements —
+# every quest text, progress bar, and category changes with the active
+# quest set. But the PANEL BACKGROUND is a solid tan/beige color that's
+# constant whenever the panel is open. If we sample pixels where the panel
+# background would be, we can detect open-state by checking if those pixels
+# look like the panel color vs the game world (grass green, sky blue, etc.).
+#
+# Sample points are relative to window dimensions (fraction of width/height)
+# so they scale with different Roblox window sizes. Points chosen to be
+# WITHIN the panel bounds AND avoid text/progress-bar rows (target the tan
+# background between quest entries).
+#
+# Panel color target: BSS panel background is roughly (215, 220, 210) RGB —
+# a light tan/beige. We check if sampled pixels are within COLOR_TOLERANCE
+# distance of this target. Majority of samples matching = tab is open.
+PANEL_BG_COLOR_BGR = (210, 220, 215)   # BGR order for cv2 frames
+PANEL_COLOR_TOLERANCE = 35              # euclidean distance in BGR space
+PANEL_COLOR_SAMPLE_POINTS = [           # (x_frac, y_frac) fractions of window
+    (0.02, 0.20),   # left edge, near top of panel below header
+    (0.10, 0.30),   # inside panel, middle-upper
+    (0.02, 0.45),   # left edge, middle of panel
+    (0.10, 0.60),   # inside panel, middle-lower
+    (0.02, 0.75),   # left edge, near bottom of panel
+]
+PANEL_MIN_MATCHING_SAMPLES = 3          # majority of 5 samples must match
+
+# Panel region for OCR when using color-based detection (no template anchor)
+COLOR_PANEL_X_START_FRAC = 0.00
+COLOR_PANEL_X_END_FRAC = 0.18
+COLOR_PANEL_Y_START_FRAC = 0.15         # skip top HUD + buff strip
+COLOR_PANEL_Y_END_FRAC = 0.90           # go down to just above the hotbar
+
 # Parse "N/M" progress where N and M can have commas, decimals, and short-
 # scale suffixes (like the pollen/honey OCR). Matches "702/1,500" or
 # "24/250,000" or "1.2M / 3.5M" — same syntax as POLLEN_PAIR_RE.
@@ -71,18 +106,49 @@ class QuestOCRReader:
                 self.th, self.tw = self.template.shape[:2]
 
     def is_ready(self):
-        return self.template is not None
+        """Reader is always ready — color detection needs no template.
+        Template match is a bonus if the user snipped one."""
+        return True
 
     def is_tab_open(self, frame_bgr):
-        """Return (is_open, confidence, match_location). match_location is
-        (x, y) of template's top-left when found, None otherwise."""
-        if not self.is_ready():
-            return False, 0.0, None
-        result = cv2.matchTemplate(frame_bgr, self.template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        if max_val < CONFIDENCE_THRESHOLD:
-            return False, max_val, None
-        return True, max_val, max_loc
+        """Return (is_open, confidence, match_location).
+
+        Two-tier detection:
+        1. Template match if user snipped `quest_tab_indicator.png` AND
+           it matches above threshold — most precise
+        2. Color-based fallback: sample left-side pixels and check if
+           they match the panel's tan background color. Robust to quest
+           content changes (everything text-based moves, background stays).
+
+        match_location is (x, y) when template-matched; None when
+        color-detected (in which case downstream code should use the
+        color-based panel region).
+        """
+        # Template path — most precise if available
+        if self.template is not None:
+            result = cv2.matchTemplate(frame_bgr, self.template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if max_val >= CONFIDENCE_THRESHOLD:
+                return True, max_val, max_loc
+
+        # Color-based fallback
+        H, W = frame_bgr.shape[:2]
+        target = np.array(PANEL_BG_COLOR_BGR, dtype=np.float32)
+        matching = 0
+        for xf, yf in PANEL_COLOR_SAMPLE_POINTS:
+            x = int(W * xf)
+            y = int(H * yf)
+            if x >= W or y >= H:
+                continue
+            pixel = frame_bgr[y, x].astype(np.float32)
+            dist = np.linalg.norm(pixel - target)
+            if dist < PANEL_COLOR_TOLERANCE:
+                matching += 1
+        if matching >= PANEL_MIN_MATCHING_SAMPLES:
+            # Return a synthetic "confidence" as matching/total ratio
+            return True, matching / len(PANEL_COLOR_SAMPLE_POINTS), None
+
+        return False, 0.0, None
 
     def read_quests(self, frame_bgr):
         """Return (is_open, [quest_dicts]) — OCR every visible quest.
@@ -106,13 +172,21 @@ class QuestOCRReader:
         if not is_open:
             return False, []
 
-        # Compute panel bounding box relative to template match
+        # Compute panel bounding box — from template match if we have one,
+        # else from color-region fractions
         H, W = frame_bgr.shape[:2]
-        x, y = loc
-        panel_x = max(0, x + PANEL_OFFSET_X)
-        panel_y = max(0, y + PANEL_OFFSET_Y)
-        panel_x2 = min(W, x + self.tw + PANEL_EXTRA_WIDTH)
-        panel_y2 = min(H, y + self.th + PANEL_EXTRA_HEIGHT)
+        if loc is not None:
+            x, y = loc
+            panel_x = max(0, x + PANEL_OFFSET_X)
+            panel_y = max(0, y + PANEL_OFFSET_Y)
+            panel_x2 = min(W, x + self.tw + PANEL_EXTRA_WIDTH)
+            panel_y2 = min(H, y + self.th + PANEL_EXTRA_HEIGHT)
+        else:
+            # Color-based detection — use fraction-of-window bounds
+            panel_x = int(W * COLOR_PANEL_X_START_FRAC)
+            panel_y = int(H * COLOR_PANEL_Y_START_FRAC)
+            panel_x2 = int(W * COLOR_PANEL_X_END_FRAC)
+            panel_y2 = int(H * COLOR_PANEL_Y_END_FRAC)
         panel = frame_bgr[panel_y:panel_y2, panel_x:panel_x2]
 
         # OCR the panel — EasyOCR handles multi-line automatically

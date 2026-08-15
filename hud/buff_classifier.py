@@ -40,10 +40,11 @@ from .pollen_ocr import _get_ocr
 # The <name> portion becomes the buff's `name` field in the output.
 PROBE_DIR = Path(__file__).parent / "probes"
 
-# Confidence threshold for template match. Slightly lower than pollen/honey
-# because buff icons are small and can be partially occluded by stack-count
-# overlay text.
-CONFIDENCE_THRESHOLD = 0.55
+# Confidence threshold for template match. Raised from 0.55 to 0.70 on
+# 2026-08-15 after user reported random false positives with 80 templates
+# loaded — many wiki-sourced icons would loosely match at 0.55 against
+# unrelated screen content. 0.70 requires strong similarity.
+CONFIDENCE_THRESHOLD = 0.70
 
 # Multi-scale template matching. Wiki-sourced buff icons are 120-225px but
 # in-game icons render at ~40-60px. We try each template at multiple scales
@@ -53,17 +54,25 @@ CONFIDENCE_THRESHOLD = 0.55
 # other scales still get tried but don't hurt.
 TEMPLATE_SCALES = [0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.75, 1.0]
 
-# Approximate buff strip region relative to full frame. User can override
-# via a hud/probes/buff_strip_region.png template snip — if present, we
-# template-match to find the strip's location dynamically. Otherwise fall
-# back to these ratios (top-left corner, spanning first ~14% of screen
-# width, buffs typically in y=40-100 range on a 1080p window).
+# Approximate buff strip region relative to full frame. Two ways to override:
+#
+# 1. Snip a `hud/probes/buff_strip_region.png` template of the strip area
+#    (or a stable anchor near it) — classifier will template-match to
+#    locate dynamically. Most robust across window sizes and layouts.
+#
+# 2. Set a `hud/probes/buff_strip_bounds.txt` file with 4 floats on one
+#    line: x_start_frac y_start_frac x_end_frac y_end_frac. Overrides the
+#    defaults below. Simplest way to tune without snipping.
+#
+# Defaults updated 2026-08-15 after user reported region was "too high
+# and not long enough to the left" — shifted the box down and wider.
 STRIP_REGION_TEMPLATE = PROBE_DIR / "buff_strip_region.png"
+STRIP_REGION_CONFIG = PROBE_DIR / "buff_strip_bounds.txt"
 STRIP_REGION_DEFAULT = {
-    "x_start_frac": 0.0,
-    "y_start_frac": 0.03,     # skip Roblox top bar
-    "x_end_frac": 0.15,       # first ~15% of width
-    "y_end_frac": 0.10,       # small vertical band
+    "x_start_frac": 0.0,      # very left edge
+    "y_start_frac": 0.05,     # buffs appear at ~y=55 on 1080p, was 0.03
+    "x_end_frac": 0.18,       # extended right, was 0.15
+    "y_end_frac": 0.12,       # buffs end at ~y=125 on 1080p, was 0.10
 }
 
 # Match "x5" or "x12" — the stack count overlay next to each buff icon.
@@ -84,6 +93,20 @@ class BuffClassifier:
         self.strip_anchor = None
         if STRIP_REGION_TEMPLATE.exists():
             self.strip_anchor = cv2.imread(str(STRIP_REGION_TEMPLATE))
+        # Optional: read user-tuned bounds from buff_strip_bounds.txt
+        self.custom_bounds = None
+        if STRIP_REGION_CONFIG.exists():
+            try:
+                nums = STRIP_REGION_CONFIG.read_text().strip().split()
+                if len(nums) >= 4:
+                    self.custom_bounds = {
+                        "x_start_frac": float(nums[0]),
+                        "y_start_frac": float(nums[1]),
+                        "x_end_frac":   float(nums[2]),
+                        "y_end_frac":   float(nums[3]),
+                    }
+            except (ValueError, IOError):
+                pass
 
     def _load_templates(self):
         """Return dict of {buff_name: template_image}. Filename buff_X.png
@@ -107,8 +130,7 @@ class BuffClassifier:
 
     def _get_strip_bounds(self, frame_bgr):
         """Return (x1, y1, x2, y2) of the buff strip region in the frame.
-        Prefers dynamic detection via strip_anchor template; falls back to
-        fixed ratios."""
+        Precedence: template anchor > user-config txt > defaults."""
         H, W = frame_bgr.shape[:2]
         if self.strip_anchor is not None:
             result = cv2.matchTemplate(frame_bgr, self.strip_anchor, cv2.TM_CCOEFF_NORMED)
@@ -117,11 +139,11 @@ class BuffClassifier:
                 ah, aw = self.strip_anchor.shape[:2]
                 x, y = max_loc
                 return x, y, min(W, x + aw), min(H, y + ah)
-        # Fallback: fixed ratios
-        x1 = int(W * STRIP_REGION_DEFAULT["x_start_frac"])
-        y1 = int(H * STRIP_REGION_DEFAULT["y_start_frac"])
-        x2 = int(W * STRIP_REGION_DEFAULT["x_end_frac"])
-        y2 = int(H * STRIP_REGION_DEFAULT["y_end_frac"])
+        bounds = self.custom_bounds or STRIP_REGION_DEFAULT
+        x1 = int(W * bounds["x_start_frac"])
+        y1 = int(H * bounds["y_start_frac"])
+        x2 = int(W * bounds["x_end_frac"])
+        y2 = int(H * bounds["y_end_frac"])
         return x1, y1, x2, y2
 
     def read_buffs(self, frame_bgr):

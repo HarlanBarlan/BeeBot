@@ -40,7 +40,8 @@ UA = (
     "Chrome/121.0.0.0 Safari/537.36"
 )
 
-# Skip images that are obviously not buff icons — screenshots, wiki chrome, etc.
+# Skip images that are obviously not buff icons — screenshots, wiki chrome,
+# random uploads with meaningless filenames, etc.
 SKIP_PATTERNS = [
     r"^RobloxScreenShot",           # Roblox in-game screenshots
     r"Site-logo",
@@ -48,6 +49,17 @@ SKIP_PATTERNS = [
     r"Wiki-vector",
     r"^Ac[0-9]+screenshot",         # more screenshots
     r"^Screen_?[Ss]hot",
+    # Nonsense filenames — UUIDs, dates, generic names — usually screenshots
+    # or comparison images uploaded with default names, not real buff icons
+    r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",  # UUID
+    r"^\d{4}[-_]\d{2}[-_]\d{2}",    # ISO date prefix (2019-12-23_6.png)
+    r"^Untitled",
+    r"closeup",                     # zoomed-in comparison shots
+    r"[Ff][Cc][Bb]\.png$",          # weird FCB suffix on some old uploads
+    r"[Rr][Bb]\.png$",              # RB suffix (Roblox version?)
+    r"^APMIcon",                    # comparison charts, not buffs
+    r"^BlueScreenIcon",             # game screen thumbnails
+    r"^LaunchCode",                 # some old launch-code UI, not a buff
 ]
 
 # Some Fandom images are variants of the same buff (e.g., "Focus_Buff",
