@@ -366,6 +366,13 @@ class BSSEnv(gym.Env):
         # Step index up to which the E key is suppressed (set after dialogue
         # rescue clicks to prevent immediate re-trigger of the same dialogue)
         self._e_suppress_until_step = -1
+        # Successful-rescue click positions cache — remembers coordinates
+        # where template-matched clicks worked. Used as fallback when no
+        # template matches during a persistent stall (bot is probably stuck
+        # in a shop / menu / unknown-bear-dialogue that we don't have a
+        # template for). Cycle through recent positions to try to burn out.
+        self._rescue_positions_seen = []   # list of (cx, cy) tuples
+        self._consecutive_failed_rescues = 0
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -897,21 +904,51 @@ class BSSEnv(gym.Env):
                 best_name = tp.name
 
         if best_val < 0.65:
-            # No dialogue-like template matched well enough. If bot is truly
-            # stuck in a dialogue we don't have a template for, user needs
-            # to snip a new one. Log the best confidence so they can see
-            # what score the closest template got.
+            # No dialogue-like template matched. Two possibilities:
+            # 1. Bot isn't actually stuck in a dialogue (e.g., stuck against
+            #    a wall) — nothing to click, we'd just swing tool at nothing
+            # 2. Bot IS stuck but in a menu/shop/unknown-bear dialogue we
+            #    have no template for — need to try SOMETHING
+            #
+            # Blind-fallback: after N consecutive template failures during a
+            # persistent stall, try clicking at recently-successful rescue
+            # positions. Bot's clicks might close the menu it's stuck in.
+            # If it doesn't work, at worst we swing the tool at nothing —
+            # low harm.
+            self._consecutive_failed_rescues += 1
             if len(template_paths) > 0:
                 print(f"[env t={self._step_count}] dialogue-rescue: no template matched "
                       f"(best {best_name} conf {best_val:.2f} — need >0.65). "
-                      f"If bot is stuck in a dialogue right now, snip a new template "
-                      f"with: snip_template.py bridges/probes/dialogue_continue_<bear_name>")
+                      f"Consecutive failures: {self._consecutive_failed_rescues}. "
+                      f"If bot is stuck in a menu/dialogue snip a template with: "
+                      f"snip_template.py bridges/probes/dialogue_continue_<name>")
+
+            # After 5 consecutive failures, try blind clicks at recently-
+            # working positions (menu-close buttons, dialogue continue, etc)
+            if (self._consecutive_failed_rescues >= 5
+                    and self._rescue_positions_seen):
+                # Try last few known-good positions in reverse order
+                for cx, cy in self._rescue_positions_seen[-3:]:
+                    move_mouse(cx, cy)
+                    time.sleep(0.03)
+                    for _ in range(DIALOGUE_RESCUE_CLICK_BURST):
+                        pydirectinput.mouseDown(button="left")
+                        time.sleep(DIALOGUE_RESCUE_CLICK_DELAY / 2)
+                        pydirectinput.mouseUp(button="left")
+                        time.sleep(DIALOGUE_RESCUE_CLICK_DELAY / 2)
+                # Also suppress E to help escape whatever's open
+                if "e" in self._held_keys:
+                    try: pydirectinput.keyUp("e")
+                    except Exception: pass
+                    self._held_keys.discard("e")
+                self._e_suppress_until_step = self._step_count + POST_RESCUE_E_SUPPRESS_STEPS
+                print(f"[env t={self._step_count}] BLIND rescue — clicked at "
+                      f"{self._rescue_positions_seen[-3:]} (no template match "
+                      f"but stall persistent). Also suppressed E.")
             return
 
         x, y = best_loc
         tw, th = best_tw, best_th
-        # Shadow the old variable name so downstream unchanged code (max_val
-        # in the log message) uses the winner's confidence.
         max_val = best_val
         cx = self._region["left"] + x + tw // 2
         cy = self._region["top"] + y + th // 2
@@ -933,6 +970,17 @@ class BSSEnv(gym.Env):
             except Exception: pass
             self._held_keys.discard("e")
         self._e_suppress_until_step = self._step_count + POST_RESCUE_E_SUPPRESS_STEPS
+
+        # Remember this position — future template-miss rescues will try it
+        # as a blind-click fallback.
+        pos = (cx, cy)
+        if pos not in self._rescue_positions_seen:
+            self._rescue_positions_seen.append(pos)
+            # Cap history at 10 positions (LRU-style trim if needed)
+            if len(self._rescue_positions_seen) > 10:
+                self._rescue_positions_seen = self._rescue_positions_seen[-10:]
+        self._consecutive_failed_rescues = 0
+
         print(f"[env t={self._step_count}] dialogue-rescue: burst {DIALOGUE_RESCUE_CLICK_BURST} "
               f"clicks at ({cx},{cy}) (match conf {max_val:.2f}) — "
               f"E suppressed for {POST_RESCUE_E_SUPPRESS_STEPS} steps")

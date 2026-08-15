@@ -60,13 +60,20 @@ class MultiTimescaleReward:
     # invariance theorem to hold. If PPO's gamma is ever changed, mirror it
     # here.
     #
-    # PBRS_SCALE choice: max Φ = 1.0 (when bag is full). Per-step F magnitudes
-    # during typical farming end up around ±0.01–0.05, comparable to the
-    # W_TICK × Δhoney × scale terms. Higher SCALE = stronger shaping (bot
-    # more aggressive about filling); lower = weaker (falls back to sparse
-    # honey signal). Start conservative.
+    # PBRS uses ABSOLUTE pollen (pollen_current) normalized against a fixed
+    # reference max, NOT the pollen_fill ratio. Reason: ratio depends on
+    # both numerator AND denominator, so if bag capacity changes (accidental
+    # downgrade in a shop), the ratio jumps without the true pollen state
+    # changing — invariance theorem breaks and bot gets spuriously rewarded
+    # for downgrading its bag. (Seen in real training 2026-08-15: bot
+    # downgraded backpack in a shop and got a reward pulse. Fixed here.)
+    #
+    # Ref max chosen well above the current known Fredrick capacity (405k)
+    # so upgrades don't clip. Full-bag Φ scales with actual pollen amount,
+    # not display fraction.
     PBRS_SCALE = 1.0
     PBRS_GAMMA = 0.99
+    PBRS_POLLEN_REF_MAX = 2_000_000   # Φ = min(1.0, pollen_current / this)
 
     # Quest progress reward — fires when the quest tab is open AND a tracked
     # quest's `current` counter increased since the last time we saw that
@@ -326,17 +333,24 @@ class MultiTimescaleReward:
         if pollen_fill is not None:
             self.last_pollen_fill = pollen_fill
 
-        # Potential-based shaping (see PBRS_SCALE / PBRS_GAMMA docstring above).
-        # Only compute when we have a fresh pollen reading — if OCR failed
-        # this tick, keep last_potential unchanged so the next valid reading
-        # doesn't see a phantom drop-to-zero.
+        # Potential-based shaping (see PBRS_SCALE docstring above).
+        # Uses ABSOLUTE pollen (pollen_current) normalized to a fixed ref
+        # max, NOT pollen_fill ratio — avoids spurious reward when bag
+        # capacity changes (shop downgrade).
+        # Falls back to pollen_fill * capacity_guess if pollen_current
+        # isn't available (older HUD reader / degraded OCR).
         pbrs_shaping = 0.0
-        if pollen_fill is not None:
-            # Clamp pollen_fill to [0, 1] — OCR occasionally reads garbage
-            # like 147% (seen at t=11400 in the 2026-08-14 log). Without
-            # clamping this creates a massive spurious PBRS spike.
+        pollen_current = hud_state.get("pollen_current")
+        if pollen_current is None and pollen_fill is not None:
+            # Fallback: infer from fill × known-max. Uses REF_MAX as the
+            # assumed capacity — imperfect but doesn't have the downgrade
+            # bug because REF_MAX is constant across bag changes.
             clamped_fill = max(0.0, min(1.0, pollen_fill))
-            current_potential = clamped_fill * self.PBRS_SCALE
+            pollen_current = clamped_fill * self.PBRS_POLLEN_REF_MAX
+        if pollen_current is not None:
+            pollen_current = max(0.0, float(pollen_current))
+            normalized = min(1.0, pollen_current / self.PBRS_POLLEN_REF_MAX)
+            current_potential = normalized * self.PBRS_SCALE
             if self.last_potential is not None:
                 pbrs_shaping = self.PBRS_GAMMA * current_potential - self.last_potential
             self.last_potential = current_potential
