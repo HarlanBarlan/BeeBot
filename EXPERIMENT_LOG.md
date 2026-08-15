@@ -71,12 +71,12 @@ Multiple iterations — see 2026-08-14 entries below for the story.
 ### Built so far
 - **Pollen bar %:** template match to locate the bar, OCR the numeric current/max
 - **Honey count:** EasyOCR on the top-center honey display, with comma stripping
+- **Quest tracker OCR (2026-08-15):** template match to detect tab-open state, EasyOCR the panel region, regex-parse each visible quest into {name, current, target, complete}. Rate-limited to every 50 steps (~10 sec) since it's expensive and quests move slowly.
 
-### Planned (Phase 2c continuation — starting 2026-08-15)
-- Quest tracker OCR
-- Buff icon classifier (Haste, Focus, Rage, Melody, Mark, etc. with stack counts)
-- Boss HP bar detector
-- Ticket count OCR
+### Planned (Phase 2c continuation — pending user materials)
+- Buff icon classifier (Haste, Focus, Rage, Melody, Mark, etc. with stack counts) — waiting on user screenshot with active buffs
+- Boss HP bar detector — deferred (bot at 15 bees, no boss engagement yet)
+- Ticket count OCR — deferred (low urgency at current stage)
 
 **Design principle:** HUD readers are PERCEPTION, not decision-makers. They produce observation channels the policy reads, and provide reward signals for the reward function. They do NOT decide what to do — that's the RL policy's job. Per [almost-pure-RL vision](https://github.com/HarlanBarlan/BeeBot/blob/main/PLAN.md).
 
@@ -243,6 +243,37 @@ Multi-step story:
 **Learning — MOST IMPORTANT DESIGN LESSON SO FAR:** almost-pure-RL means the ACTION SPACE must be RL-friendly, not just the reward function. Symmetric action-space bounds matter when the policy is Gaussian. This is an invisible bias baked into action-space design that RL can never fix. **Prime paper example** of an implementation detail that dominates outcome.
 
 **Publishable insight:** the "asymmetric bounds trap" — using `Box(0, 1)` with 0.5-centered interpretation for continuous-delta actions is a common but subtly wrong choice for on-policy Gaussian-output algorithms.
+
+---
+
+### 2026-08-15: Quest tracker OCR + progress reward channel
+
+**Motivation:** unlock a new reward signal for quest progress — bot's biggest untapped learning direction. Also add meta-behavior "check quest tab periodically" as an emergent RL target.
+
+**Design (Option A per user — fully learned):**
+- Quest tab only visible when bot clicks the map icon (top-left)
+- OCR the panel when tab is open, extract each quest's {name-like text, current, target, complete}
+- Reward fires ONLY when tab is open AND we detect progress delta on a tracked quest
+- Bot must LEARN to open the tab periodically to earn quest rewards (natural incentive)
+- Strategy of WHICH quests to prioritize is left for Phase 4+ (bot picks fields based on quest state)
+
+**Approach:**
+- `hud/quest_ocr.py`: template match on `quest_tab_indicator.png` → detect open state → OCR panel region (relative to template) → parse quests with `POLLEN_PAIR_RE`-style regex
+- `hud/reader.py`: separate `read_quest()` method so env can rate-limit independently from pollen/honey
+- `rl/env.py`: quest OCR runs every 50 steps (~10 sec) — expensive, quests move slowly. Added 4 quest scalars to HUD observation vector (`quest_tab_open`, `active_quest_count_norm`, `completed_quest_count_norm`, `time_since_quest_tab_seen`)
+- `rl/reward.py`: new `W_QUEST_PROGRESS=2.0` (per full-target progress) and `W_QUEST_COMPLETION=5.0` (one-time bonus). Quest snapshot keyed by `quest_key` (text with progress numbers stripped) for stable identity across OCR reads.
+
+**Bug caught in testing:** initial implementation keyed the snapshot by `raw_line` which INCLUDED the current progress numbers — so every OCR read looked like a "new quest" and progress delta never fired. Fix: added `_strip_progress()` helper that removes the "N/M" and "Complete!" from the OCR text, uses the remaining text as identity key.
+
+**Verified via simulation:**
+- Quest 100/1000 → 200/1000 with tab open: reward +0.20 (matches `W_QUEST_PROGRESS * 100/1000 = 0.2`)
+- Tab closed between reads: no quest reward
+- Quest 200/1000 → 500/1000 after tab reopened: reward +0.60 (delta accumulated correctly)
+- Quest completion transition: +5.00 (matches `W_QUEST_COMPLETION`)
+
+**User must snip template before this works:** `hud/probes/quest_tab_indicator.png` — a stable visual element only visible when the quest tab is open (e.g., a category header or the panel background).
+
+**Learning — key design pattern:** persistent-menu HUD reading requires a separate "is menu open" gate and stable per-item identity keys across reads (raw text changes with progress). This pattern will repeat for other menus (backpack, hive, shop UIs).
 
 ---
 

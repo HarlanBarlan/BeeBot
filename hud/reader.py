@@ -22,16 +22,20 @@ Planned (stubs):
 
 from .pollen_ocr import PollenOCRReader
 from .honey_ocr import HoneyOCRReader
+from .quest_ocr import QuestOCRReader
 
 
 class HudReader:
     def __init__(self):
         self.pollen = PollenOCRReader()
         self.honey = HoneyOCRReader()
+        self.quest = QuestOCRReader()
 
     def read(self, frame_bgr):
-        """Return a dict of currently-detectable HUD state. Keys are only
-        present if the corresponding detector succeeded on this frame."""
+        """Fast HUD read — pollen + honey (numbers displayed every frame).
+        Called every HUD_READ_EVERY_N_STEPS (~1s) by env.py. Does NOT
+        include quest state — quest OCR is expensive and rate-limited
+        separately via read_quest()."""
         state = {}
 
         if self.pollen.is_ready():
@@ -48,15 +52,26 @@ class HudReader:
                 state["honey"] = honey
                 state["honey_confidence"] = conf
 
-        # future: tickets, buffs, boss, quests
+        # future: tickets, buffs, boss
 
         return state
+
+    def read_quest(self, frame_bgr):
+        """Dedicated quest OCR — expensive (whole panel + many text lines).
+        Env calls this at a slower cadence (QUEST_READ_EVERY_N_STEPS).
+        Returns {quest_tab_open: bool, quests: list} or empty dict if
+        the reader isn't ready."""
+        if not self.quest.is_ready():
+            return {}
+        tab_open, quests = self.quest.read_quests(frame_bgr)
+        return {"quest_tab_open": tab_open, "quests": quests}
 
     def status(self):
         """Print which detectors are loaded/missing (for setup diagnostics)."""
         print("[hud] detector status:")
         print(f"  pollen (OCR) : {'READY' if self.pollen.is_ready() else 'MISSING TEMPLATE'}")
         print(f"  honey (OCR)  : {'READY' if self.honey.is_ready() else 'MISSING TEMPLATE'}")
+        print(f"  quest (OCR)  : {'READY' if self.quest.is_ready() else 'MISSING TEMPLATE (snip hud/probes/quest_tab_indicator.png)'}")
 
 
 if __name__ == "__main__":

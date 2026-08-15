@@ -140,6 +140,12 @@ PAUSE_KEY = "f8"
 # for return-to-hive detection and reward tracking.
 HUD_READ_EVERY_N_STEPS = 10
 
+# Quest OCR is even slower than pollen/honey (whole panel + more text). Rate
+# limit to every ~5 sec — quest progress moves slower than convert timing.
+# The quest reader ALSO short-circuits via cheap template match when the
+# tab isn't visible, so most calls return fast anyway.
+QUEST_READ_EVERY_N_STEPS = 50
+
 # Rate-limit window lookup — pygetwindow enumerates ALL system windows every
 # call (~100-500ms on a busy machine). Roblox window rarely moves. Cache
 # for a few seconds between refreshes.
@@ -198,7 +204,7 @@ N_MOUSE = 2  # [left, right]
 # Keep the vector SMALL (~8 dims): our on-policy sample rate is ~5 fps, so
 # over-parameterizing the HUD MLP on many inputs overfits fast.
 
-HUD_DIM = 8
+HUD_DIM = 12
 HUD_INDEX = {
     "pollen_fill":                0,   # 0..1 (direct)
     "honey_log_norm":             1,   # log(1+honey) / log(1+HONEY_LOG_CAP), clipped
@@ -208,7 +214,18 @@ HUD_INDEX = {
     "time_since_pollen_change":   5,   # clip(sec, 60) / 60
     "pollen_valid":               6,   # 1 if OCR read within HUD_STALE_SEC else 0
     "honey_valid":                7,   # 1 if OCR read within HUD_STALE_SEC else 0
+    # Quest tracker channels (added 2026-08-15). Bot must OPEN the quest tab
+    # to see these — they only update when the tab is visible. Reward
+    # function fires quest-progress rewards only when tab_open=1.
+    "quest_tab_open":             8,   # 1 if quest tab currently visible, else 0
+    "active_quest_count_norm":    9,   # count / QUEST_COUNT_NORM_MAX, clipped
+    "completed_quest_count_norm": 10,  # count / QUEST_COUNT_NORM_MAX, clipped
+    "time_since_quest_tab_seen":  11,  # clip(sec, 300) / 300 — encourages
+                                       # bot to open tab (value climbs high
+                                       # if bot hasn't checked in a while)
 }
+QUEST_COUNT_NORM_MAX = 15   # normalize quest counts by this — 15 covers
+                            # a typical early/mid game quest load
 
 HUD_HISTORY_SECONDS = 60.0           # window over which deltas are computed
 HUD_STALE_SEC = 30.0                 # a read older than this counts as "no data"
@@ -320,6 +337,15 @@ class BSSEnv(gym.Env):
         # Last OCR-read timestamps (for validity flags)
         self._last_pollen_read_ts = None
         self._last_honey_read_ts = None
+        # Quest tracker state — timestamp of last time we OCR'd the quest
+        # tab AND it was open. Used both for staleness indicator and to
+        # rate-limit quest OCR (it's expensive).
+        self._last_quest_tab_open_ts = None
+        # Per-quest progress tracker keyed by raw_line text (BSS's progress
+        # line format is deterministic per quest, so raw text is a stable
+        # per-quest identifier). Values are dicts {current, target, ts}.
+        # Used by the reward function to compute progress deltas.
+        self._quest_progress_snapshot = {}
         # Manual-pause state (F8 hold) — tracked so we only print on transitions
         self._paused = False
         # Step index up to which the E key is suppressed (set after dialogue
@@ -559,6 +585,13 @@ class BSSEnv(gym.Env):
             new_hud = self._hud.read(frame.copy())
             if new_hud:
                 self._cached_hud.update(new_hud)
+        # Quest OCR at its own slower cadence — expensive AND quest progress
+        # moves slower than tick reward events. Cache result in the same
+        # dict; env logic checks hud["quest_tab_open"] etc.
+        if self._step_count % QUEST_READ_EVERY_N_STEPS == 0:
+            new_quest = self._hud.read_quest(frame.copy())
+            if new_quest:
+                self._cached_hud.update(new_quest)
         hud = self._cached_hud
 
         # Downsize + normalize + CHW for observation
@@ -592,6 +625,23 @@ class BSSEnv(gym.Env):
             # Honey only ever increases in normal play; treat any gain as an event
             if self._last_seen_honey is None or honey > self._last_seen_honey:
                 self._last_honey_gain_ts = now
+
+        # Quest tab tracker — update snapshot whenever the tab is open.
+        # The env doesn't compute reward here (that's reward.py's job); we
+        # just maintain the snapshot as authoritative state.
+        if hud.get("quest_tab_open"):
+            self._last_quest_tab_open_ts = now
+            for q in hud.get("quests", []):
+                # Key by quest_key (progress-stripped) not raw_line
+                key = q.get("quest_key")
+                if key is None:
+                    continue
+                self._quest_progress_snapshot[key] = {
+                    "current": q.get("current"),
+                    "target": q.get("target"),
+                    "complete": q.get("complete", False),
+                    "ts": now,
+                }
 
     def _compute_hud_vector(self, hud, now):
         """Build the fixed-size HUD scalar vector from cached HUD state +
@@ -644,6 +694,27 @@ class BSSEnv(gym.Env):
             vec[HUD_INDEX["pollen_valid"]] = 1.0
         if self._last_honey_read_ts is not None and now - self._last_honey_read_ts < HUD_STALE_SEC:
             vec[HUD_INDEX["honey_valid"]] = 1.0
+
+        # Quest scalars — populated whenever we HAVE a quest state, regardless
+        # of whether the tab is currently open (the snapshot persists between
+        # openings so the policy always sees the last-known counts).
+        if hud.get("quest_tab_open"):
+            vec[HUD_INDEX["quest_tab_open"]] = 1.0
+        active = sum(1 for q in self._quest_progress_snapshot.values()
+                     if not q.get("complete", False))
+        completed = sum(1 for q in self._quest_progress_snapshot.values()
+                        if q.get("complete", False))
+        vec[HUD_INDEX["active_quest_count_norm"]] = float(np.clip(
+            active / QUEST_COUNT_NORM_MAX, 0.0, 1.0
+        ))
+        vec[HUD_INDEX["completed_quest_count_norm"]] = float(np.clip(
+            completed / QUEST_COUNT_NORM_MAX, 0.0, 1.0
+        ))
+        if self._last_quest_tab_open_ts is not None:
+            since = min(now - self._last_quest_tab_open_ts, 300.0)
+            vec[HUD_INDEX["time_since_quest_tab_seen"]] = float(since / 300.0)
+        else:
+            vec[HUD_INDEX["time_since_quest_tab_seen"]] = 1.0   # unknown → far ago
 
         return vec
 
