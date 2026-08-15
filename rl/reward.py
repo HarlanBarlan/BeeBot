@@ -78,14 +78,26 @@ class MultiTimescaleReward:
     # still filtering true OCR noise (which is single-frame or bidirectional).
     OUTLIER_ACCEPT_AFTER_N = 5
 
-    # Decimal-shift OCR errors are the most common failure mode for honey OCR
-    # (2.87M mis-read as 28.7M because a comma looks like a period). If a
-    # reading is 8-12x or 0.08-0.12x the previous stable reading, it's almost
-    # certainly a decimal-shift error, not a real event.
-    DECIMAL_SHIFT_RATIO_LOW = 0.08
-    DECIMAL_SHIFT_RATIO_HIGH = 0.12
-    DECIMAL_SHIFT_RATIO_LOW_10X = 8.0
-    DECIMAL_SHIFT_RATIO_HIGH_10X = 12.0
+    # Decimal-shift / comma-drop / partial-parse OCR errors are the most
+    # common failure modes for honey OCR:
+    #   - 2.87M mis-read as 28.7M (comma looks like period) → 10x ratio
+    #   - 3,127,866 mis-read as 3,128 (OCR truncated) → 1000x ratio
+    #   - 3.15M mis-read as 315M (period lost entirely) → 100x ratio
+    # Any ratio matching one of these decimal-shift patterns is almost
+    # certainly an OCR error, not a real event. Reject WITHOUT incrementing
+    # the persistence counter (so a streak of these can't force a false
+    # re-baseline).
+    # Pattern: [1e-4, 1e-3, 1e-2] for shrink-shifts and [100, 1000, 10000]
+    # for expand-shifts, with ~20% tolerance around each.
+    DECIMAL_SHIFT_RATIOS = [
+        (0.00008, 0.00012),   # 10000x truncation
+        (0.0008, 0.0012),     # 1000x truncation
+        (0.008, 0.012),       # 100x truncation
+        (0.08, 0.12),          # 10x truncation
+        (8.0, 12.0),           # 10x expansion
+        (80.0, 120.0),         # 100x expansion
+        (800.0, 1200.0),       # 1000x expansion
+    ]
 
     def __init__(self):
         self.honey_history = deque(maxlen=36000)  # (ts, honey) pairs; ~1 hour at 10 FPS
@@ -155,9 +167,8 @@ class MultiTimescaleReward:
         if self.last_honey is not None and self.last_honey > 0:
             raw_delta = honey - self.last_honey
             ratio = honey / self.last_honey
-            is_decimal_shift = (
-                (self.DECIMAL_SHIFT_RATIO_LOW_10X <= ratio <= self.DECIMAL_SHIFT_RATIO_HIGH_10X)
-                or (self.DECIMAL_SHIFT_RATIO_LOW <= ratio <= self.DECIMAL_SHIFT_RATIO_HIGH)
+            is_decimal_shift = any(
+                low <= ratio <= high for low, high in self.DECIMAL_SHIFT_RATIOS
             )
             if is_decimal_shift:
                 # Almost certainly OCR decimal-shift error — never real.
@@ -194,9 +205,17 @@ class MultiTimescaleReward:
                         self._consecutive_pos_outliers = 0
                     else:
                         return 0.0
-                # After accepting a big delta, treat it as a re-baseline
-                # event: update last_honey but don't count it in delta_tick
-                # (that reward would be enormous and meaningless).
+                # After accepting a big delta, treat it as a full re-baseline:
+                # - Update last_honey to the new value
+                # - CLEAR honey_history so rolling minute/hour deltas don't
+                #   compute against pre-baseline values (that bug caused
+                #   total_reward=3649 in the 2026-08-14 hour-4-ish run —
+                #   history had (old_honey_3M, new_honey_31M) and every
+                #   subsequent step contributed +23 reward from the
+                #   spurious "gained 28M in the last minute" signal)
+                # - Return 0 reward for this step (we're not rewarding or
+                #   punishing the detected state change itself)
+                self.honey_history.clear()
                 self.last_honey = honey
                 self.honey_history.append((now, honey))
                 return 0.0

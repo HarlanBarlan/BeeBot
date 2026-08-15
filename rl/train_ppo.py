@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import keyboard as kb_lib
 
@@ -140,7 +141,14 @@ def main():
     # returns (Andrychowicz 2020 ranks reward normalization among top 5
     # design choices). We do NOT normalize observations — our HUD scalars
     # are already normalized in env.py and image obs is [0, 1].
+    #
+    # IMPORTANT: Monitor MUST wrap the underlying env before it goes into
+    # DummyVecEnv, otherwise SB3's per-episode reward tracking (ep_rew_mean,
+    # ep_len_mean) breaks silently. SB3 auto-adds Monitor only if the env
+    # isn't already wrapped in a VecEnv — since we're pre-wrapping, we have
+    # to add Monitor ourselves.
     env = BSSEnv()
+    env = Monitor(env)
     env = DummyVecEnv([lambda: env])
     vec_norm_path = MODELS_DIR / "vec_normalize.pkl"
     if vec_norm_path.exists():
