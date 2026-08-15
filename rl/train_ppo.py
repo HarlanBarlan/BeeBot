@@ -27,7 +27,6 @@ from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import keyboard as kb_lib
 
 from .env import BSSEnv, release_cursor_clip
@@ -135,36 +134,20 @@ def main():
     MODELS_DIR.mkdir(exist_ok=True, parents=True)
     LOGS_DIR.mkdir(exist_ok=True, parents=True)
 
-    # Wrap env with VecNormalize to normalize rewards to unit variance.
-    # Sparse-reward PPO fits the critic much better when reward scale is
-    # normalized — SB3's implementation is a rolling std of discounted
-    # returns (Andrychowicz 2020 ranks reward normalization among top 5
-    # design choices). We do NOT normalize observations — our HUD scalars
-    # are already normalized in env.py and image obs is [0, 1].
+    # Wrap env in Monitor for SB3's per-episode reward tracking.
+    # PPO auto-wraps in DummyVecEnv internally, but only auto-adds Monitor
+    # if the env isn't already a VecEnv — since we're not pre-wrapping in
+    # DummyVecEnv anymore, we still explicitly Monitor-wrap so ep_rew_mean
+    # / ep_len_mean show up in the training logs reliably.
     #
-    # IMPORTANT: Monitor MUST wrap the underlying env before it goes into
-    # DummyVecEnv, otherwise SB3's per-episode reward tracking (ep_rew_mean,
-    # ep_len_mean) breaks silently. SB3 auto-adds Monitor only if the env
-    # isn't already wrapped in a VecEnv — since we're pre-wrapping, we have
-    # to add Monitor ourselves.
+    # VecNormalize was tried on 2026-08-14 and removed after showing
+    # regression vs the pre-VecNormalize run (ep_rew_mean +3→+1.7 became
+    # -1.98→-1.57, EV -1.27→+0.156 became -4.24). Rolling std of returns
+    # is unstable for our sparse-reward env — value function chases a
+    # moving target. Kept the Monitor addition (real fix), reverted the
+    # VecNormalize part.
     env = BSSEnv()
     env = Monitor(env)
-    env = DummyVecEnv([lambda: env])
-    vec_norm_path = MODELS_DIR / "vec_normalize.pkl"
-    if vec_norm_path.exists():
-        print(f"[resume] loading VecNormalize stats: {vec_norm_path}")
-        env = VecNormalize.load(str(vec_norm_path), env)
-        # Continue accumulating stats during training
-        env.training = True
-        env.norm_reward = True
-    else:
-        print("[fresh] no VecNormalize stats found — starting fresh normalization")
-        env = VecNormalize(
-            env,
-            norm_obs=False,       # HUD scalars + image already normalized
-            norm_reward=True,     # scale rewards to unit variance
-            gamma=0.99,           # must match PPO's gamma
-        )
 
     # Multi-input feature extractor: CNN(image) + MLP(hud scalars) -> concat.
     # See rl/policy.py docstring for the rationale — TL;DR the value function
@@ -256,13 +239,6 @@ def main():
         print("[rl] KeyboardInterrupt — saving and stopping")
     finally:
         model.save(str(MODELS_DIR / "beebot_ppo_latest"))
-        # Save VecNormalize stats separately — needed to resume with correct
-        # reward scaling on next session
-        try:
-            env.save(str(vec_norm_path))
-            print(f"[rl] saved VecNormalize stats: {vec_norm_path}")
-        except Exception as e:
-            print(f"[rl] failed to save VecNormalize stats: {e}")
         env.close()
         release_cursor_clip()  # belt-and-suspenders in case env.close didn't run
         print("[rl] stopped — saved beebot_ppo_latest.zip")
