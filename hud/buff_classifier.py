@@ -94,17 +94,24 @@ class BuffClassifier:
         if STRIP_REGION_TEMPLATE.exists():
             self.strip_anchor = cv2.imread(str(STRIP_REGION_TEMPLATE))
         # Optional: read user-tuned bounds from buff_strip_bounds.txt
+        # File format: 4 space-separated floats on first non-comment line
+        # (lines starting with # or blank are ignored)
         self.custom_bounds = None
         if STRIP_REGION_CONFIG.exists():
             try:
-                nums = STRIP_REGION_CONFIG.read_text().strip().split()
-                if len(nums) >= 4:
-                    self.custom_bounds = {
-                        "x_start_frac": float(nums[0]),
-                        "y_start_frac": float(nums[1]),
-                        "x_end_frac":   float(nums[2]),
-                        "y_end_frac":   float(nums[3]),
-                    }
+                for line in STRIP_REGION_CONFIG.read_text().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    nums = line.split()
+                    if len(nums) >= 4:
+                        self.custom_bounds = {
+                            "x_start_frac": float(nums[0]),
+                            "y_start_frac": float(nums[1]),
+                            "x_end_frac":   float(nums[2]),
+                            "y_end_frac":   float(nums[3]),
+                        }
+                        break
             except (ValueError, IOError):
                 pass
 
@@ -240,10 +247,18 @@ if __name__ == "__main__":
     strip = frame[y1:y2, x1:x2]
     debug_path = PROBE_DIR / "debug_buff_strip.png"
     cv2.imwrite(str(debug_path), strip)
-    print(f"\nBuff strip region saved to {debug_path} (x=[{x1},{x2}] y=[{y1},{y2}])")
-    print("If the strip location looks wrong, snip a hud/probes/buff_strip_region.png "
-          "with a stable non-changing area near the buff row (e.g., a corner or the "
-          "row of side buttons below the strip).")
+    fH, fW = frame.shape[:2]
+    print(f"\nBuff strip region saved to {debug_path}")
+    print(f"  Pixels: x=[{x1}, {x2}], y=[{y1}, {y2}]  (in a {fW}x{fH} window)")
+    print(f"  Fractions: x=[{x1/fW:.3f}, {x2/fW:.3f}], y=[{y1/fH:.3f}, {y2/fH:.3f}]")
+    if classifier.custom_bounds:
+        print(f"  Source: hud/probes/buff_strip_bounds.txt")
+    elif classifier.strip_anchor is not None:
+        print(f"  Source: hud/probes/buff_strip_region.png template match")
+    else:
+        print(f"  Source: default fractions (no config file, no anchor template)")
+    print(f"\nIf the debug image doesn't tightly frame your actual buff icons,")
+    print(f"edit hud/probes/buff_strip_bounds.txt and re-run this command.")
 
     if classifier.templates:
         print()

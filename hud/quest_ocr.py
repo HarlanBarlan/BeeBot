@@ -59,11 +59,15 @@ PANEL_EXTRA_HEIGHT = 900      # panel extends this far down from template
 # WITHIN the panel bounds AND avoid text/progress-bar rows (target the tan
 # background between quest entries).
 #
-# Panel color target: BSS panel background is roughly (215, 220, 210) RGB —
-# a light tan/beige. We check if sampled pixels are within COLOR_TOLERANCE
-# distance of this target. Majority of samples matching = tab is open.
-PANEL_BG_COLOR_BGR = (210, 220, 215)   # BGR order for cv2 frames
-PANEL_COLOR_TOLERANCE = 35              # euclidean distance in BGR space
+# Panel color target — the panel background color in the OPEN state.
+# Default guess is a light blue; user can override via
+# `hud/probes/quest_panel_bg_color.txt` with 3 space-separated ints:
+#   "B G R" (BGR order — matches how cv2 loads frames)
+# Run `python -m hud.quest_ocr --sample-colors` while the panel is open
+# to see actual pixel colors at the sample points and pick the right one.
+PANEL_BG_COLOR_BGR = (200, 180, 150)   # light blue guess (BGR)
+PANEL_COLOR_TOLERANCE = 40              # euclidean distance in BGR space
+PANEL_COLOR_CONFIG = Path(__file__).parent / "probes" / "quest_panel_bg_color.txt"
 PANEL_COLOR_SAMPLE_POINTS = [           # (x_frac, y_frac) fractions of window
     (0.02, 0.20),   # left edge, near top of panel below header
     (0.10, 0.30),   # inside panel, middle-upper
@@ -104,6 +108,15 @@ class QuestOCRReader:
             self.template = cv2.imread(str(template_path))
             if self.template is not None:
                 self.th, self.tw = self.template.shape[:2]
+        # Optional user-configured panel background color (overrides default)
+        self.panel_bg_color = PANEL_BG_COLOR_BGR
+        if PANEL_COLOR_CONFIG.exists():
+            try:
+                nums = PANEL_COLOR_CONFIG.read_text().strip().split()
+                if len(nums) >= 3:
+                    self.panel_bg_color = (int(nums[0]), int(nums[1]), int(nums[2]))
+            except (ValueError, IOError):
+                pass
 
     def is_ready(self):
         """Reader is always ready — color detection needs no template.
@@ -133,7 +146,7 @@ class QuestOCRReader:
 
         # Color-based fallback
         H, W = frame_bgr.shape[:2]
-        target = np.array(PANEL_BG_COLOR_BGR, dtype=np.float32)
+        target = np.array(self.panel_bg_color, dtype=np.float32)
         matching = 0
         for xf, yf in PANEL_COLOR_SAMPLE_POINTS:
             x = int(W * xf)
@@ -149,6 +162,21 @@ class QuestOCRReader:
             return True, matching / len(PANEL_COLOR_SAMPLE_POINTS), None
 
         return False, 0.0, None
+
+    def sample_pixel_colors(self, frame_bgr):
+        """Diagnostic — return list of (x, y, bgr_color) at each sample point.
+        Use this to figure out the correct PANEL_BG_COLOR_BGR for your setup:
+        open the panel, run this, look at the printed colors, pick one that
+        matches the panel background."""
+        H, W = frame_bgr.shape[:2]
+        samples = []
+        for xf, yf in PANEL_COLOR_SAMPLE_POINTS:
+            x = int(W * xf)
+            y = int(H * yf)
+            if x < W and y < H:
+                pixel = tuple(int(v) for v in frame_bgr[y, x])
+                samples.append((x, y, pixel))
+        return samples
 
     def read_quests(self, frame_bgr):
         """Return (is_open, [quest_dicts]) — OCR every visible quest.
@@ -259,29 +287,43 @@ def _parse_num(num_str, suffix):
 
 
 if __name__ == "__main__":
+    import argparse
     import sys
     import mss
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from roblox_window import get_roblox_region
 
-    reader = QuestOCRReader()
-    if not reader.is_ready():
-        raise SystemExit(
-            f"Missing {TEMPLATE_PATH}. Snip a template first:\n"
-            f"  Open the quest tab in-game (click the map icon top-left)\n"
-            f"  Run: python snip_template.py hud/probes/quest_tab_indicator\n"
-            f"  Snip a stable visual element that's ONLY visible when the\n"
-            f"  quest tab is open (e.g., a header text like 'Quests' or a\n"
-            f"  category background pattern)."
-        )
-    region = get_roblox_region()
-    _get_ocr()  # warm-up OCR model
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--sample-colors", action="store_true",
+                    help="Sample pixel colors at the color-detection sample "
+                         "points and print them. Use this to figure out the "
+                         "correct PANEL_BG_COLOR_BGR value for your setup: "
+                         "open the panel in-game, run with this flag, pick "
+                         "one of the printed colors, write it to "
+                         "hud/probes/quest_panel_bg_color.txt as 'B G R'.")
+    args = ap.parse_args()
 
-    print("Reading quest tab...")
+    reader = QuestOCRReader()
+    region = get_roblox_region()
+
     with mss.MSS() as sct:
         shot = sct.grab(region)
         frame = np.array(shot)[:, :, :3].copy()
 
+    if args.sample_colors:
+        print(f"Pixel colors at the {len(PANEL_COLOR_SAMPLE_POINTS)} sample "
+              f"points (BGR order):")
+        for x, y, bgr in reader.sample_pixel_colors(frame):
+            print(f"  ({x:4d}, {y:4d}): B={bgr[0]:3d} G={bgr[1]:3d} R={bgr[2]:3d}")
+        print(f"\nCurrent panel bg target: {reader.panel_bg_color} "
+              f"(tolerance {PANEL_COLOR_TOLERANCE})")
+        print(f"\nTo use a different target color, save it to:")
+        print(f"  {PANEL_COLOR_CONFIG}")
+        print(f"as a single line with 3 space-separated ints: 'B G R'")
+        sys.exit(0)
+
+    _get_ocr()  # warm-up OCR model
+    print("Reading quest tab...")
     is_open, quests = reader.read_quests(frame)
     if not is_open:
         _, conf, _ = reader.is_tab_open(frame)

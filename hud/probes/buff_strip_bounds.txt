@@ -1,0 +1,13 @@
+# Buff strip region bounds — 4 space-separated floats on the first line.
+# Format: x_start_frac  y_start_frac  x_end_frac  y_end_frac
+# All values are fractions of the Roblox window dimensions.
+#
+# Adjust these values until `python -m hud.buff_classifier` saves a
+# debug_buff_strip.png that tightly frames your actual buff icons.
+#
+# Rough starting points for common cases:
+#   1920x1080 window:  0.0 0.05 0.18 0.12
+#   1600x900 window:   0.0 0.06 0.20 0.14
+#
+# Comments (lines starting with #) and blank lines are ignored.
+0.0 0.05 0.18 0.12
