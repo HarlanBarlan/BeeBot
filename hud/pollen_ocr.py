@@ -97,6 +97,11 @@ class PollenOCRReader:
         """Return (fill_fraction, current, max, match_confidence) or (None, None, None, best_conf)."""
         if not self.is_ready():
             return None, None, None, 0.0
+        # Guard: OpenCV crashes if template > frame. Happens on smaller-
+        # resolution windows (e.g., RDP session vs main desktop).
+        fh, fw = frame_bgr.shape[:2]
+        if self.th > fh or self.tw > fw:
+            return None, None, None, 0.0
         result = cv2.matchTemplate(frame_bgr, self.template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
         if max_val < CONFIDENCE_THRESHOLD:

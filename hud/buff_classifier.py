@@ -144,12 +144,14 @@ class BuffClassifier:
         Precedence: template anchor > user-config txt > defaults."""
         H, W = frame_bgr.shape[:2]
         if self.strip_anchor is not None:
-            result = cv2.matchTemplate(frame_bgr, self.strip_anchor, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
-            if max_val >= CONFIDENCE_THRESHOLD:
-                ah, aw = self.strip_anchor.shape[:2]
-                x, y = max_loc
-                return x, y, min(W, x + aw), min(H, y + ah)
+            ah, aw = self.strip_anchor.shape[:2]
+            # Guard: skip if anchor template is bigger than frame (would crash)
+            if ah <= H and aw <= W:
+                result = cv2.matchTemplate(frame_bgr, self.strip_anchor, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if max_val >= CONFIDENCE_THRESHOLD:
+                    x, y = max_loc
+                    return x, y, min(W, x + aw), min(H, y + ah)
         bounds = self.custom_bounds or STRIP_REGION_DEFAULT
         x1 = int(W * bounds["x_start_frac"])
         y1 = int(H * bounds["y_start_frac"])

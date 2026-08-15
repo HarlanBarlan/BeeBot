@@ -890,11 +890,18 @@ class BSSEnv(gym.Env):
         best_loc = None
         best_tw = best_th = 0
         best_name = ""
+        fh, fw = frame.shape[:2]
         for tp in template_paths:
             template = cv2.imread(str(tp))
             if template is None:
                 continue
             th, tw = template.shape[:2]
+            # Guard: OpenCV crashes if template > frame. Happens when templates
+            # were snipped at higher resolution than current window (e.g.,
+            # RDP session running at smaller size than main desktop). Skip
+            # oversized templates silently.
+            if th > fh or tw > fw:
+                continue
             result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(result)
             if max_val > best_val:

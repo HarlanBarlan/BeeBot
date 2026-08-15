@@ -160,12 +160,26 @@ class QuestOCRReader:
         color-detected (in which case downstream code should use the
         color-based panel region).
         """
-        # Template path — most precise if available
+        # Template path — most precise if available. Only usable if template
+        # actually fits in the frame; on smaller windows (e.g., RDP session)
+        # the template snipped on a bigger display can be larger than the
+        # frame, and OpenCV crashes if we pass a template > image. Silently
+        # fall through to color detection in that case.
         if self.template is not None:
-            result = cv2.matchTemplate(frame_bgr, self.template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
-            if max_val >= CONFIDENCE_THRESHOLD:
-                return True, max_val, max_loc
+            fh, fw = frame_bgr.shape[:2]
+            if self.th <= fh and self.tw <= fw:
+                result = cv2.matchTemplate(frame_bgr, self.template, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                if max_val >= CONFIDENCE_THRESHOLD:
+                    return True, max_val, max_loc
+            else:
+                # Warn once — template snipped at wrong resolution
+                if not getattr(self, "_size_warned", False):
+                    print(f"[quest_ocr] template ({self.tw}x{self.th}) larger "
+                          f"than frame ({fw}x{fh}) — falling back to color "
+                          f"detection. Re-snip quest_tab_indicator.png at "
+                          f"current resolution to fix.")
+                    self._size_warned = True
 
         # Color-based fallback — check each sample point against ALL known
         # panel colors. A pixel counts as "panel-like" if it matches ANY
