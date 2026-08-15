@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import keyboard as kb_lib
 
 from .env import BSSEnv, release_cursor_clip
@@ -133,7 +134,29 @@ def main():
     MODELS_DIR.mkdir(exist_ok=True, parents=True)
     LOGS_DIR.mkdir(exist_ok=True, parents=True)
 
+    # Wrap env with VecNormalize to normalize rewards to unit variance.
+    # Sparse-reward PPO fits the critic much better when reward scale is
+    # normalized — SB3's implementation is a rolling std of discounted
+    # returns (Andrychowicz 2020 ranks reward normalization among top 5
+    # design choices). We do NOT normalize observations — our HUD scalars
+    # are already normalized in env.py and image obs is [0, 1].
     env = BSSEnv()
+    env = DummyVecEnv([lambda: env])
+    vec_norm_path = MODELS_DIR / "vec_normalize.pkl"
+    if vec_norm_path.exists():
+        print(f"[resume] loading VecNormalize stats: {vec_norm_path}")
+        env = VecNormalize.load(str(vec_norm_path), env)
+        # Continue accumulating stats during training
+        env.training = True
+        env.norm_reward = True
+    else:
+        print("[fresh] no VecNormalize stats found — starting fresh normalization")
+        env = VecNormalize(
+            env,
+            norm_obs=False,       # HUD scalars + image already normalized
+            norm_reward=True,     # scale rewards to unit variance
+            gamma=0.99,           # must match PPO's gamma
+        )
 
     # Multi-input feature extractor: CNN(image) + MLP(hud scalars) -> concat.
     # See rl/policy.py docstring for the rationale — TL;DR the value function
@@ -225,6 +248,13 @@ def main():
         print("[rl] KeyboardInterrupt — saving and stopping")
     finally:
         model.save(str(MODELS_DIR / "beebot_ppo_latest"))
+        # Save VecNormalize stats separately — needed to resume with correct
+        # reward scaling on next session
+        try:
+            env.save(str(vec_norm_path))
+            print(f"[rl] saved VecNormalize stats: {vec_norm_path}")
+        except Exception as e:
+            print(f"[rl] failed to save VecNormalize stats: {e}")
         env.close()
         release_cursor_clip()  # belt-and-suspenders in case env.close didn't run
         print("[rl] stopped — saved beebot_ppo_latest.zip")

@@ -167,13 +167,14 @@ POST_RESCUE_E_SUPPRESS_STEPS = 50     # ~10 sec at 5 fps — enough for the
                                       # policy's WASD to walk the bot out
 
 # How many rapid-fire clicks per rescue firing. BSS bear dialogues have
-# multiple text lines and each click only advances ONE line — a single click
-# per firing leaves the bot stuck in a slow chain. Community consensus:
-# 5-15 clicks per exchange. Bursting through in one shot resolves most
-# dialogues fully instead of doing them one line every 6 seconds.
-DIALOGUE_RESCUE_CLICK_BURST = 10
-DIALOGUE_RESCUE_CLICK_DELAY = 0.05    # seconds between burst clicks
-                                      # (~200ms total for a 10-click burst)
+# multiple text lines and each click only advances ONE line. Prior 10-click
+# burst wasn't enough for long quest dialogues (hour-4 log showed 8+
+# consecutive rescue firings over 200 steps — dialogues chain longer than
+# 10 lines and each burst only got through part of them). Bumped to 25 with
+# slightly longer delay so Roblox has time to register each click.
+DIALOGUE_RESCUE_CLICK_BURST = 25
+DIALOGUE_RESCUE_CLICK_DELAY = 0.08    # seconds between burst clicks
+                                      # (~2 sec total for a 25-click burst)
 
 # Only expose game-relevant keys in the action space (matches imitation training)
 ACTION_KEYS = sorted(GAME_RELEVANT_KEYS)
