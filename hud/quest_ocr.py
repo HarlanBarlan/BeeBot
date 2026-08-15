@@ -59,23 +59,41 @@ PANEL_EXTRA_HEIGHT = 900      # panel extends this far down from template
 # WITHIN the panel bounds AND avoid text/progress-bar rows (target the tan
 # background between quest entries).
 #
-# Panel color target — the panel background color in the OPEN state.
-# Default guess is a light blue; user can override via
-# `hud/probes/quest_panel_bg_color.txt` with 3 space-separated ints:
-#   "B G R" (BGR order — matches how cv2 loads frames)
-# Run `python -m hud.quest_ocr --sample-colors` while the panel is open
-# to see actual pixel colors at the sample points and pick the right one.
-PANEL_BG_COLOR_BGR = (200, 180, 150)   # light blue guess (BGR)
-PANEL_COLOR_TOLERANCE = 40              # euclidean distance in BGR space
-PANEL_COLOR_CONFIG = Path(__file__).parent / "probes" / "quest_panel_bg_color.txt"
-PANEL_COLOR_SAMPLE_POINTS = [           # (x_frac, y_frac) fractions of window
-    (0.02, 0.20),   # left edge, near top of panel below header
-    (0.10, 0.30),   # inside panel, middle-upper
-    (0.02, 0.45),   # left edge, middle of panel
-    (0.10, 0.60),   # inside panel, middle-lower
-    (0.02, 0.75),   # left edge, near bottom of panel
+# Panel colors — a family of characteristic colors that appear in the quest
+# panel regardless of scroll position. Single-color detection failed because
+# at any FIXED pixel position, scroll shifts what's there (sometimes
+# background, sometimes progress bar, sometimes header). Multi-color
+# detection: sample MANY points across the panel region; if a pixel matches
+# ANY of these characteristic colors, count it as a "panel pixel". Panel
+# is open if enough sample points are panel pixels.
+#
+# Colors below were derived from user's --sample-colors runs on 2026-08-15:
+# these appeared consistently across scroll positions in the panel region.
+# BGR order (matches cv2 frames).
+PANEL_COLORS_BGR = [
+    (247, 240, 229),   # light beige — panel background
+    (222, 195, 150),   # slightly darker tan — panel section bg
+    (160, 136, 99),    # brownish — quest text row bg
+    (85, 108, 244),    # saturated red — progress bar (uncompleted)
+    (96, 255, 110),    # saturated green — progress bar (completed)
+    (62, 61, 91),      # dark blue-navy — category header bg
+    (53, 42, 27),      # dark brown — dividers / borders
 ]
-PANEL_MIN_MATCHING_SAMPLES = 3          # majority of 5 samples must match
+PANEL_COLOR_TOLERANCE = 30              # per-color distance in BGR space
+# Legacy single-color config still supported — if user set it, we ADD their
+# color to the family (they know their setup best).
+PANEL_BG_COLOR_BGR = (247, 240, 229)    # kept for backwards-compat
+PANEL_COLOR_CONFIG = Path(__file__).parent / "probes" / "quest_panel_bg_color.txt"
+# Sample points — dense grid across the left panel region. More points =
+# more robust to scroll (some points will always hit background or
+# characteristic colored elements). 30 points at 5 x-values × 6 y-values.
+PANEL_COLOR_SAMPLE_POINTS = [(xf, yf)
+    for xf in (0.02, 0.05, 0.09, 0.12, 0.15)
+    for yf in (0.20, 0.32, 0.44, 0.56, 0.68, 0.80)]
+# Need at least N sample points to match a panel color. With 30 points and
+# a panel that occupies ~40% of the sampled area (rest is quest content
+# with different colors), ~30% match rate is a natural threshold.
+PANEL_MIN_MATCHING_SAMPLES = 9          # 30% of 30 samples
 
 # Panel region for OCR when using color-based detection (no template anchor)
 COLOR_PANEL_X_START_FRAC = 0.00
@@ -108,15 +126,20 @@ class QuestOCRReader:
             self.template = cv2.imread(str(template_path))
             if self.template is not None:
                 self.th, self.tw = self.template.shape[:2]
-        # Optional user-configured panel background color (overrides default)
-        self.panel_bg_color = PANEL_BG_COLOR_BGR
+        # Panel colors to check — start with the family defaults and add
+        # any user-configured extra color from the legacy config file
+        self.panel_colors = list(PANEL_COLORS_BGR)
         if PANEL_COLOR_CONFIG.exists():
             try:
                 nums = PANEL_COLOR_CONFIG.read_text().strip().split()
                 if len(nums) >= 3:
-                    self.panel_bg_color = (int(nums[0]), int(nums[1]), int(nums[2]))
+                    user_color = (int(nums[0]), int(nums[1]), int(nums[2]))
+                    if user_color not in self.panel_colors:
+                        self.panel_colors.append(user_color)
             except (ValueError, IOError):
                 pass
+        # Pre-compute numpy version for fast distance calc
+        self._panel_colors_np = np.array(self.panel_colors, dtype=np.float32)
 
     def is_ready(self):
         """Reader is always ready — color detection needs no template.
@@ -144,9 +167,10 @@ class QuestOCRReader:
             if max_val >= CONFIDENCE_THRESHOLD:
                 return True, max_val, max_loc
 
-        # Color-based fallback
+        # Color-based fallback — check each sample point against ALL known
+        # panel colors. A pixel counts as "panel-like" if it matches ANY
+        # of the panel-characteristic colors within tolerance.
         H, W = frame_bgr.shape[:2]
-        target = np.array(self.panel_bg_color, dtype=np.float32)
         matching = 0
         for xf, yf in PANEL_COLOR_SAMPLE_POINTS:
             x = int(W * xf)
@@ -154,8 +178,9 @@ class QuestOCRReader:
             if x >= W or y >= H:
                 continue
             pixel = frame_bgr[y, x].astype(np.float32)
-            dist = np.linalg.norm(pixel - target)
-            if dist < PANEL_COLOR_TOLERANCE:
+            # Distance to every panel color; if any is within tolerance, match
+            dists = np.linalg.norm(self._panel_colors_np - pixel, axis=1)
+            if dists.min() < PANEL_COLOR_TOLERANCE:
                 matching += 1
         if matching >= PANEL_MIN_MATCHING_SAMPLES:
             # Return a synthetic "confidence" as matching/total ratio
@@ -311,15 +336,26 @@ if __name__ == "__main__":
         frame = np.array(shot)[:, :, :3].copy()
 
     if args.sample_colors:
-        print(f"Pixel colors at the {len(PANEL_COLOR_SAMPLE_POINTS)} sample "
+        print(f"Pixel colors at {len(PANEL_COLOR_SAMPLE_POINTS)} sample "
               f"points (BGR order):")
+        print(f"MATCH column: which panel color family (if any) matched, "
+              f"or '-' for game-world pixel")
         for x, y, bgr in reader.sample_pixel_colors(frame):
-            print(f"  ({x:4d}, {y:4d}): B={bgr[0]:3d} G={bgr[1]:3d} R={bgr[2]:3d}")
-        print(f"\nCurrent panel bg target: {reader.panel_bg_color} "
-              f"(tolerance {PANEL_COLOR_TOLERANCE})")
-        print(f"\nTo use a different target color, save it to:")
-        print(f"  {PANEL_COLOR_CONFIG}")
-        print(f"as a single line with 3 space-separated ints: 'B G R'")
+            pixel = np.array(bgr, dtype=np.float32)
+            dists = np.linalg.norm(reader._panel_colors_np - pixel, axis=1)
+            best_idx = int(dists.argmin())
+            best_dist = float(dists[best_idx])
+            if best_dist < PANEL_COLOR_TOLERANCE:
+                match = f"panel_color[{best_idx}] {reader.panel_colors[best_idx]} (d={best_dist:.1f})"
+            else:
+                match = f"- (nearest {reader.panel_colors[best_idx]}, d={best_dist:.1f})"
+            print(f"  ({x:4d}, {y:4d}): B={bgr[0]:3d} G={bgr[1]:3d} R={bgr[2]:3d}  {match}")
+        print(f"\nPanel colors checked ({len(reader.panel_colors)}):")
+        for i, c in enumerate(reader.panel_colors):
+            print(f"  [{i}] BGR {c}")
+        print(f"Tolerance: {PANEL_COLOR_TOLERANCE}")
+        print(f"Need {PANEL_MIN_MATCHING_SAMPLES}+ matches (of "
+              f"{len(PANEL_COLOR_SAMPLE_POINTS)} sample points) to consider tab open")
         sys.exit(0)
 
     _get_ocr()  # warm-up OCR model

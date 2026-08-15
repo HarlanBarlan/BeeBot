@@ -40,11 +40,15 @@ from .pollen_ocr import _get_ocr
 # The <name> portion becomes the buff's `name` field in the output.
 PROBE_DIR = Path(__file__).parent / "probes"
 
-# Confidence threshold for template match. Raised from 0.55 to 0.70 on
-# 2026-08-15 after user reported random false positives with 80 templates
-# loaded — many wiki-sourced icons would loosely match at 0.55 against
-# unrelated screen content. 0.70 requires strong similarity.
-CONFIDENCE_THRESHOLD = 0.70
+# Confidence threshold for template match. Raised iteratively:
+#   0.55 → 0.70 (2026-08-15 morning) after first false-positive report
+#   0.70 → 0.82 (2026-08-15 evening) after user tuned buff region correctly
+#   but STILL saw many false positives. Wiki-sourced icons don't render
+#   identically to in-game rendering, so even at 0.70 unrelated icons
+#   would spuriously match. 0.82 basically requires a near-perfect match.
+# User-snipped in-game templates will still hit 0.82; wiki icons often
+# won't. Net effect: fewer detections but the ones that fire are real.
+CONFIDENCE_THRESHOLD = 0.82
 
 # Multi-scale template matching. Wiki-sourced buff icons are 120-225px but
 # in-game icons render at ~40-60px. We try each template at multiple scales
