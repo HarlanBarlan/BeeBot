@@ -60,38 +60,16 @@ class _RECT(ctypes.Structure):
 
 
 # Exclude the top strip of the window from cursor movement.
-# - Windows title bar (avoid clicking X to close)
-# - Roblox top-bar dropdown that appears when mouse touches top edge
-# - Roblox "More" menu that opens near top-right
-# - "Get Voice Chat" button in top area
-# - HUD (pollen bar, honey count, buff icons) — bot shouldn't click these anyway
-# Bumped from 50px to 150px on 2026-08-15 after user reported bot cursor
-# stuck in top-left clicking unwanted UI (More menu, Voice Chat, quest
-# button, etc.). 150px pushes the safe zone below all top-row Roblox
-# and BSS UI elements.
-CURSOR_TOP_EXCLUSION_PX = 150
-# Left exclusion zone specifically bumped to protect against BSS's side-panel
-# icons (quests, inventory, amulets) that live in the top-left area.
-# Bot doesn't know how to use these menus yet — clicking them opens panels
-# that block gameplay.
-CURSOR_LEFT_EXCLUSION_PX = 100
-CURSOR_RIGHT_EXCLUSION_PX = 30    # kept smaller — right side of BSS is mostly clean
-# Bottom exclusion — small margin for multi-monitor safety
+# - In windowed mode this covers the Windows title bar (avoid clicking X to close)
+# - In borderless mode this avoids Roblox's top-bar dropdown that appears when
+#   the mouse touches the very top edge (which covers the HUD)
+CURSOR_TOP_EXCLUSION_PX = 50
+# Bottom + side exclusion zones. Bumped from 5/15 to 30/30 because on
+# multi-monitor setups with DPI scaling, pygetwindow's reported Roblox
+# window coordinates can be a few pixels off from where the OS's ClipCursor
+# actually clips — small errors let the cursor escape to adjacent monitors.
 CURSOR_BOTTOM_EXCLUSION_PX = 30
-
-# Backwards-compat alias (still referenced in a few places)
-CURSOR_SIDE_EXCLUSION_PX = CURSOR_LEFT_EXCLUSION_PX  # deprecated — use L/R specifically
-
-# Recenter safety net: if the cursor has been stuck in the same corner
-# region for CURSOR_STUCK_STEPS steps, force it back to window center.
-# Without this, PPO's Gaussian policy output can pin the cursor at a
-# corner permanently (untrained cursor action = noise with a small bias
-# = cursor drifts to boundary and stays). Never getting cursor away from
-# corners means the bot can never learn cursor behaviors that require
-# other positions (like clicking dialogue boxes in the middle of screen).
-CURSOR_STUCK_STEPS = 200          # ~40 sec at 5 fps
-CURSOR_CORNER_FRACTION = 0.20      # define "corner region" as top-left/etc
-                                   # 20% of the window in each dim
+CURSOR_SIDE_EXCLUSION_PX = 30
 
 # Cursor is INCREMENTAL (delta from current position), not absolute.
 # Reason: PPO's Gaussian policy over a Box space samples heavily into the
@@ -105,13 +83,11 @@ MAX_CURSOR_DELTA_PX = 80
 
 def clip_cursor_to_region(region):
     """Confine the OS cursor to Roblox's window, minus edge exclusion zones
-    that trigger bad game behavior (title bar clicks, top-bar dropdown,
-    Roblox More menu, BSS side-panel icons, etc.). Uses split L/R exclusions
-    because BSS puts more UI on the left than the right."""
+    that trigger bad game behavior (title bar clicks, top-bar dropdown)."""
     rect = _RECT(
-        region["left"] + CURSOR_LEFT_EXCLUSION_PX,
+        region["left"] + CURSOR_SIDE_EXCLUSION_PX,
         region["top"] + CURSOR_TOP_EXCLUSION_PX,
-        region["left"] + region["width"] - CURSOR_RIGHT_EXCLUSION_PX,
+        region["left"] + region["width"] - CURSOR_SIDE_EXCLUSION_PX,
         region["top"] + region["height"] - CURSOR_BOTTOM_EXCLUSION_PX,
     )
     ctypes.windll.user32.ClipCursor(ctypes.byref(rect))
@@ -266,15 +242,29 @@ class BSSEnv(gym.Env):
                 dtype=np.float32,
             ),
         })
-        # Action: multi-binary for keys + mouse buttons, plus (cursor_x, cursor_y)
-        # SB3 needs a single Box; we flatten into a length-(N_KEYS + N_MOUSE + 2) vector
-        # where the first N_KEYS+N_MOUSE entries are 0/1 sigmoid outputs and the last 2
-        # are cursor coords in [0,1].
-        self.action_space = spaces.Box(
-            low=0.0, high=1.0,
-            shape=(N_KEYS + N_MOUSE + 2,),
-            dtype=np.float32,
-        )
+        # Action space: per-dim bounds. Keys/mouse are [0, 1] (thresholded
+        # at 0.5 for on/off). Cursor dims are [-1, +1] (interpreted as
+        # delta fraction: 0 = neutral, ±1 = full ±MAX_CURSOR_DELTA_PX).
+        #
+        # WHY per-dim bounds instead of a uniform Box(0, 1):
+        # PPO's continuous action head is a Gaussian with default init mean
+        # ≈ 0 and std ≈ 1. Clipped to [0, 1], the effective mean is ≈ 0.16
+        # (because ~half the raw samples are ≤0, all clip to 0). If we then
+        # interpret 0.5 as "neutral cursor delta," the effective average
+        # delta becomes (0.16 - 0.5) × MAX ≈ -0.68 × MAX per step — cursor
+        # drifts hard toward the top-left corner every step. RL can't fix
+        # this because there's no direct reward signal on cursor position;
+        # it's a bias built into the action-space design.
+        #
+        # Solution: give the cursor dims a symmetric [-1, +1] range. Now
+        # Gaussian(0, 1) has effective mean 0 = neutral cursor delta. Zero
+        # drift by construction. The key/mouse dims stay [0, 1] because
+        # they're thresholded discretely and slight bias-toward-off is fine
+        # (means bot's default is "no key held," matches natural gameplay).
+        lows = np.zeros(N_KEYS + N_MOUSE + 2, dtype=np.float32)
+        highs = np.ones(N_KEYS + N_MOUSE + 2, dtype=np.float32)
+        lows[N_KEYS + N_MOUSE:] = -1.0   # cursor dims: [-1, +1]
+        self.action_space = spaces.Box(low=lows, high=highs, dtype=np.float32)
         # Screen capture: prefer dxcam (GPU-accelerated), fall back to mss.
         # dxcam grabs frames directly from GPU framebuffer via DirectX
         # Desktop Duplication — much faster than mss's CPU-side path.
@@ -335,9 +325,6 @@ class BSSEnv(gym.Env):
         # Step index up to which the E key is suppressed (set after dialogue
         # rescue clicks to prevent immediate re-trigger of the same dialogue)
         self._e_suppress_until_step = -1
-        # Track how long cursor has been stuck in a corner region (top-left
-        # etc.) — used by the periodic-recenter safety net
-        self._cursor_stuck_since_step = None
         pydirectinput.FAILSAFE = True
         # Kill pydirectinput's default 100ms sleep after every call. That
         # global PAUSE was silently adding 500-1000ms per env step because
@@ -435,41 +422,6 @@ class BSSEnv(gym.Env):
         # mouse can leave the Roblox window freely.
         if self._region is not None and not self._paused:
             clip_cursor_to_region(self._region)
-
-        # Cursor recenter safety net: PPO's Gaussian cursor action can
-        # develop a small bias, and because cursor position doesn't
-        # directly earn reward, RL doesn't self-correct — cursor drifts
-        # to a corner and stays. Once there, bot can never explore
-        # cursor positions needed for other behaviors (dialogue click,
-        # menu buttons, etc.). Also, stuck cursor in top-left keeps
-        # clicking unwanted UI (Roblox More menu, quest button, etc.).
-        # Fix: detect stuck-in-corner state and periodically recenter.
-        if self._region is not None and not self._paused and self._last_cursor is not None:
-            cx, cy = self._last_cursor
-            rleft = self._region["left"]
-            rtop = self._region["top"]
-            rw = self._region["width"]
-            rh = self._region["height"]
-            # "Corner region" = top/bottom 20% AND left/right 20%
-            in_top = (cy - rtop) < rh * CURSOR_CORNER_FRACTION
-            in_bottom = (cy - rtop) > rh * (1 - CURSOR_CORNER_FRACTION)
-            in_left = (cx - rleft) < rw * CURSOR_CORNER_FRACTION
-            in_right = (cx - rleft) > rw * (1 - CURSOR_CORNER_FRACTION)
-            in_corner = (in_top or in_bottom) and (in_left or in_right)
-            if in_corner:
-                if self._cursor_stuck_since_step is None:
-                    self._cursor_stuck_since_step = self._step_count
-                elif self._step_count - self._cursor_stuck_since_step > CURSOR_STUCK_STEPS:
-                    # Force recenter
-                    center_x = rleft + rw // 2
-                    center_y = rtop + rh // 2
-                    move_mouse(center_x, center_y)
-                    self._last_cursor = (center_x, center_y)
-                    self._cursor_stuck_since_step = None
-                    print(f"[env t={self._step_count}] cursor stuck in corner "
-                          f"({cx},{cy}) — recentered to ({center_x},{center_y})")
-            else:
-                self._cursor_stuck_since_step = None
 
         reward = self._reward.compute(hud, obs_frame=obs)
 
@@ -750,16 +702,18 @@ class BSSEnv(gym.Env):
                 self._held_mouse.discard(mb)
 
         # Cursor as DELTA from current position (not absolute).
-        # cursor[i] in [0, 1]: 0.5 = no movement, extremes = full-speed shift.
+        # cursor[i] in [-1, +1]: 0 = no movement, ±1 = full ±MAX_CURSOR_DELTA_PX.
+        # See action_space docstring above for why we use [-1, +1] here
+        # instead of the [0, 1] range that keys/mouse use.
         if self._region is not None:
             # Initialize cursor to window center on first step
             if self._last_cursor is None:
                 cx = self._region["left"] + self._region["width"] // 2
                 cy = self._region["top"] + self._region["height"] // 2
             else:
-                # Map [0,1] action to [-1,+1] delta scale, then to pixels
-                dx = (float(cursor[0]) - 0.5) * 2.0 * MAX_CURSOR_DELTA_PX
-                dy = (float(cursor[1]) - 0.5) * 2.0 * MAX_CURSOR_DELTA_PX
+                # Map [-1, +1] action directly to ± pixel delta
+                dx = float(cursor[0]) * MAX_CURSOR_DELTA_PX
+                dy = float(cursor[1]) * MAX_CURSOR_DELTA_PX
                 cx = self._last_cursor[0] + int(dx)
                 cy = self._last_cursor[1] + int(dy)
 
@@ -767,8 +721,8 @@ class BSSEnv(gym.Env):
             # top-bar dropdown trigger, or extreme edges. Deltas that would
             # push out just get truncated at the boundary and the cursor
             # will "bounce" back into the interior on the next step.
-            cx = max(self._region["left"] + CURSOR_LEFT_EXCLUSION_PX,
-                     min(self._region["left"] + self._region["width"] - CURSOR_RIGHT_EXCLUSION_PX, cx))
+            cx = max(self._region["left"] + CURSOR_SIDE_EXCLUSION_PX,
+                     min(self._region["left"] + self._region["width"] - CURSOR_SIDE_EXCLUSION_PX, cx))
             cy = max(self._region["top"] + CURSOR_TOP_EXCLUSION_PX,
                      min(self._region["top"] + self._region["height"] - CURSOR_BOTTOM_EXCLUSION_PX, cy))
 
