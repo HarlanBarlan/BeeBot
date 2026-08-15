@@ -733,24 +733,28 @@ class BSSEnv(gym.Env):
         a bear dialogue, template-match on the 'click to continue' text and
         click that spot to advance the dialogue.
 
-        User snips the template once: `snip_template.py bridges/probes/dialogue_continue`
-        while a dialogue is open. Template should be tight around the "click
-        to continue" text or similar dialogue-advance element.
+        Supports MULTIPLE templates via glob (`dialogue_continue*.png`) so
+        the user can snip a separate template for each bear whose dialogue
+        looks different — e.g. `dialogue_continue.png`, `dialogue_continue_black_bear.png`,
+        `dialogue_continue_mother_bear.png`. All matching templates are tried
+        each rescue attempt; the highest-confidence match above threshold wins.
 
-        If template file is missing, prints a helpful note (once) and skips.
+        Snip templates via `snip_template.py bridges/probes/dialogue_continue_XYZ`
+        while that specific dialogue is open. Template should be tight around
+        a stable text/button element inside the dialogue box.
+
+        If NO template files exist, prints a helpful note (once) and skips.
+        Also prints the best-observed confidence when it fires but is below
+        threshold — helps diagnose missing templates.
         """
-        template_path = Path(__file__).parent.parent / "bridges" / "probes" / "dialogue_continue.png"
-        if not template_path.exists():
+        probe_dir = Path(__file__).parent.parent / "bridges" / "probes"
+        template_paths = sorted(probe_dir.glob("dialogue_continue*.png"))
+        if not template_paths:
             if not getattr(self, "_dialogue_template_warned", False):
-                print(f"[env] stall rescue skipped — no dialogue template at {template_path}. "
+                print(f"[env] stall rescue skipped — no dialogue templates in {probe_dir}. "
                       f"Snip one with: snip_template.py bridges/probes/dialogue_continue")
                 self._dialogue_template_warned = True
             return
-
-        template = cv2.imread(str(template_path))
-        if template is None:
-            return
-        th, tw = template.shape[:2]
 
         # Grab current frame (small overhead, only fires on stall)
         try:
@@ -759,14 +763,41 @@ class BSSEnv(gym.Env):
         except Exception:
             return
 
-        result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        if max_val < 0.65:
-            # No dialogue visible — don't click randomly. Bot is stuck on
-            # something else (wall, weird visual state); RL learns from that.
+        # Try each template, keep the best match
+        best_val = -1.0
+        best_loc = None
+        best_tw = best_th = 0
+        best_name = ""
+        for tp in template_paths:
+            template = cv2.imread(str(tp))
+            if template is None:
+                continue
+            th, tw = template.shape[:2]
+            result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            if max_val > best_val:
+                best_val = max_val
+                best_loc = max_loc
+                best_tw, best_th = tw, th
+                best_name = tp.name
+
+        if best_val < 0.65:
+            # No dialogue-like template matched well enough. If bot is truly
+            # stuck in a dialogue we don't have a template for, user needs
+            # to snip a new one. Log the best confidence so they can see
+            # what score the closest template got.
+            if len(template_paths) > 0:
+                print(f"[env t={self._step_count}] dialogue-rescue: no template matched "
+                      f"(best {best_name} conf {best_val:.2f} — need >0.65). "
+                      f"If bot is stuck in a dialogue right now, snip a new template "
+                      f"with: snip_template.py bridges/probes/dialogue_continue_<bear_name>")
             return
 
-        x, y = max_loc
+        x, y = best_loc
+        tw, th = best_tw, best_th
+        # Shadow the old variable name so downstream unchanged code (max_val
+        # in the log message) uses the winner's confidence.
+        max_val = best_val
         cx = self._region["left"] + x + tw // 2
         cy = self._region["top"] + y + th // 2
         move_mouse(cx, cy)
