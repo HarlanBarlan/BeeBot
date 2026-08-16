@@ -47,11 +47,20 @@ from gymnasium import spaces
 # Try to use dxcam for faster screen capture (GPU-accelerated via DirectX
 # Desktop Duplication API). Falls back to mss if dxcam isn't installed or
 # can't create a camera in this session (e.g. some RDP configurations).
+#
+# bettercam is a dxcam-compatible fork with broader GPU support — sometimes
+# works on hardware where dxcam raises D3DERR_INVALIDCALL ("device interface
+# or feature level is not supported"). Try in order: dxcam -> bettercam -> mss.
 try:
     import dxcam
     _dxcam_available = True
 except ImportError:
     _dxcam_available = False
+try:
+    import bettercam
+    _bettercam_available = True
+except ImportError:
+    _bettercam_available = False
 
 
 class _RECT(ctypes.Structure):
@@ -301,16 +310,24 @@ class BSSEnv(gym.Env):
         highs = np.ones(N_KEYS + N_MOUSE + 2, dtype=np.float32)
         lows[N_KEYS + N_MOUSE:] = -1.0   # cursor dims: [-1, +1]
         self.action_space = spaces.Box(low=lows, high=highs, dtype=np.float32)
-        # Screen capture: prefer dxcam (GPU-accelerated), fall back to mss.
-        # dxcam grabs frames directly from GPU framebuffer via DirectX
-        # Desktop Duplication — much faster than mss's CPU-side path.
+        # Screen capture: try GPU-accelerated paths (dxcam, then bettercam),
+        # fall back to mss (CPU-side). Both dxcam and bettercam grab frames
+        # directly from GPU framebuffer via DirectX; bettercam handles more
+        # GPU/driver combos.
         self._dxcam = None
         if _dxcam_available:
             try:
                 self._dxcam = dxcam.create(output_color="BGR")
                 print("[env] using dxcam for screen capture (GPU-accelerated)")
             except Exception as e:
-                print(f"[env] dxcam init failed ({e}) — falling back to mss")
+                print(f"[env] dxcam init failed ({e}) — trying bettercam")
+                self._dxcam = None
+        if self._dxcam is None and _bettercam_available:
+            try:
+                self._dxcam = bettercam.create(output_color="BGR")
+                print("[env] using bettercam for screen capture (GPU-accelerated)")
+            except Exception as e:
+                print(f"[env] bettercam init failed ({e}) — falling back to mss")
                 self._dxcam = None
         if self._dxcam is None:
             print("[env] using mss for screen capture (CPU-side)")
