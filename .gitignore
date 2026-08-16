@@ -25,10 +25,15 @@ logs/
 # Path recordings — machine/user-specific
 bridges/paths/*.json
 
-# Snipped templates — technically source but easier to re-snip per machine
-# (uncomment if you want to include them)
-# !hud/probes/*.png
-# !bridges/probes/*.png
+# Snipped templates — resolution-sensitive, re-snip per machine (see docs/COMMANDS.md).
+# Live-game templates: HUD readers, popups, dialogue rescue. Machine-local.
+# Wiki-sourced templates (buff_*.png) stay tracked — they're not resolution-sensitive.
+hud/probes/pollen_bar_frame.png
+hud/probes/honey_display.png
+hud/probes/popup_*.png
+bridges/probes/dialogue_continue*.png
+# Machine-tuned config (region bounds depend on Roblox window size)
+hud/probes/buff_strip_bounds.txt
 
 # Debug outputs
 hud/probes/debug_*.png
