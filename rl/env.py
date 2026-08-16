@@ -110,6 +110,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from common.roblox_window import get_roblox_region
 from common.robo_input import move_mouse
+from common.milestones import MilestoneTracker
 from imitation.dataset import MODEL_INPUT_W, MODEL_INPUT_H, GAME_RELEVANT_KEYS
 from hud.reader import HudReader
 from hud.popup_handler import PopupHandler
@@ -332,6 +333,14 @@ class BSSEnv(gym.Env):
         if self._dxcam is None:
             print("[env] using mss for screen capture (CPU-side)")
         self._sct = mss.MSS()      # always available as fallback
+
+        # Milestone tracker — auto-logs honey/step thresholds to
+        # logs/milestones.jsonl. Persistent state across restarts.
+        self._milestones = MilestoneTracker()
+        self._milestones.record_event(
+            "session_start",
+            "training session started",
+        )
 
         self._hud = HudReader()
         # Popup handler — auto-dismisses known intrusive Roblox popups
@@ -676,6 +685,14 @@ class BSSEnv(gym.Env):
             # Honey only ever increases in normal play; treat any gain as an event
             if self._last_seen_honey is None or honey > self._last_seen_honey:
                 self._last_honey_gain_ts = now
+            # Auto-milestone check — fires only on new threshold crossings,
+            # persists across restarts. Cheap: set-membership check per call.
+            self._milestones.check_honey(self._step_count, honey)
+
+        # Step-count milestones — cheap to check but no need per-tick.
+        # Every 100 steps is plenty (thresholds are 100k+).
+        if self._step_count % 100 == 0:
+            self._milestones.check_step(self._step_count)
 
     def _compute_hud_vector(self, hud, now):
         """Build the fixed-size HUD scalar vector from cached HUD state +

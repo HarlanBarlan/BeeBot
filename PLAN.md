@@ -7,7 +7,7 @@ Build a Bee Swarm Simulator AI that learns to play well **on its own terms** —
 - **Minimize hard-coded behavior.** The bot should learn HOW to play. What we script is the bare minimum plumbing — nothing that suggests strategy.
 - **Learn every playstyle organically.** Farming, questing, boss-fighting, boost sessions, hive management — RL discovers what works, in what order, and when. No hardcoded "always do X sequence" recipes.
 - **Reward the outcomes, not the paths.** Give the model honey/hour and let it invent the path. Don't hardcode "Field Dice → Cloud → Sprinkler" as an ordered recipe just because humans do it.
-- **Deliverable: publishable paper.** No published RL work exists on Roblox / macro-scale games / multi-hour reward cycles. This project fills that gap. Every design decision that trades cleanliness for pragmatism gets logged in `EXPERIMENT_LOG.md` for the eventual writeup.
+- **Deliverable: publishable paper.** No published RL work exists on Roblox / macro-scale games / multi-hour reward cycles. This project fills that gap. Every design decision that trades cleanliness for pragmatism gets logged in `docs/EXPERIMENT_LOG.md`; every behavioral/performance milestone gets logged in `docs/MILESTONES.md`. Together they form the paper's methodology + learning-curve substrate.
 
 ## What is scripted (and what isn't)
 
@@ -214,7 +214,7 @@ Original estimates were mostly right on the phases but off on Phase 2c (didn't a
 3. **Measure everything against honey/hour.** Reward shaping is fine, but the ultimate benchmark is what the bot actually achieves.
 4. **Don't rewrite requirements once training data is collected.** New action keys, new obs channels require careful handling (fresh policy).
 5. **Verify BSS facts before asserting.** Wiki summaries via agents have been unreliable. Ask user or fetch specific wiki page directly. See `feedback_verify_bss_facts`.
-6. **Document every substantive change in `EXPERIMENT_LOG.md`.** Paper depends on it.
+6. **Document every substantive change in `docs/EXPERIMENT_LOG.md` and every behavioral/performance milestone in `docs/MILESTONES.md`.** Paper depends on both.
 
 ---
 
