@@ -10,8 +10,10 @@ __pycache__/
 *.pyd
 
 # Trained model checkpoints — big binaries, transfer separately (see PLAN.md)
-models/*.pt
-models/*.zip
+# Use ** to match nested paths too (e.g., models/archive/imitation_epochs/*.pt)
+models/**/*.pt
+models/**/*.zip
+models/**/*.pkl
 
 # Gameplay recording data — big, machine-generated, not source
 data/

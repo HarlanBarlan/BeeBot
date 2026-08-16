@@ -10,4 +10,4 @@
 #   1600x900 window:   0.0 0.06 0.20 0.14
 #
 # Comments (lines starting with #) and blank lines are ignored.
-0.0 0.05 0.18 0.12
+0.002 0.085 0.3 0.12

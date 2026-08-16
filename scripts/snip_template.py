@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 import mss
 
-from roblox_window import get_roblox_region
+from common.roblox_window import get_roblox_region
 
 out_name = sys.argv[1] if len(sys.argv) > 1 else "token"
 if not out_name.lower().endswith(".png"):

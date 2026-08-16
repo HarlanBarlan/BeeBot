@@ -18,7 +18,7 @@ from .base import BridgeScript, BridgeStatus
 # Uses the play_path helper from our earlier phase
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from play_path import play as play_recorded_path
+from imitation.play_path import play as play_recorded_path
 
 
 PATHS_DIR = Path(__file__).parent / "paths"

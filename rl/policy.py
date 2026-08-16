@@ -26,7 +26,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from model import _cnn_backbone, BACKBONE_OUT_DIM
+from imitation.model import _cnn_backbone, BACKBONE_OUT_DIM
 
 
 class BSSCnnFeatures(BaseFeaturesExtractor):

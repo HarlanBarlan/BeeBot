@@ -78,16 +78,18 @@ Purpose-built vision models that give RL ground-truth state. Perception, not dec
 **Built and wired into observation vector + reward function:**
 - **Pollen bar %** — template match + OCR `current/max`
 - **Honey count** — EasyOCR with comma stripping and robust outlier filtering (decimal-shift detection, persistence-based rebaseline with 60s cooldown, ping-pong protection)
-- **Quest tracker** — multi-color panel-open detection (scroll-invariant), bbox-based description→progress line association, per-quest progress deltas fire reward channel when tab is open
 
 **Built but deferred to Phase 4+ (infrastructure in place, returns empty for now):**
 - **Buff icon classifier** — 69 wiki-fetched buff templates + multi-scale template matching. Currently returns 0 detections at 0.82 confidence threshold because wiki icons don't render pixel-identically to in-game. Aggregate observation channels (`active_buff_count_norm`, `total_buff_stacks_norm`) exist but stay at 0. Real fix (in-game template snipping) deferred until buff-specific strategy matters (Phase 4 boost cycles).
+
+**Built then removed 2026-08-15 (deferred to Phase 5 VLM):**
+- **Quest tracker** — pure-OCR quest reading gave the policy syntactic progress numbers without any semantic understanding of what quests wanted. All three failure modes converged: (a) reward channels double-counted farming activity, (b) observation channels were redundant with what the CNN can already see in the raw image, (c) OCR was the biggest bug source in the whole HUD stack (scroll invariance, bbox association, resolution mismatches). Phase 5 VLM will read quests as language, not as OCR'd progress numbers. Code deleted: `hud/quest_ocr.py`, `HudReader.read_quest()`, all quest slots in `HUD_INDEX`. See [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md).
 
 **Explicitly deferred to later phases:**
 - **Boss HP bar detector** — bot has no chance against bosses at 15 bees. Build in Phase 4 when bot is engagement-capable.
 - **Ticket count OCR** — low urgency until spending strategy becomes learnable (Phase 5).
 
-Current HUD observation vector is 14 dims (see `HUD_INDEX` in `rl/env.py`). Room to grow.
+Current HUD observation vector is 10 dims (see `HUD_INDEX` in `rl/env.py`). Room to grow.
 
 ---
 
@@ -96,7 +98,7 @@ Current HUD observation vector is 14 dims (see `HUD_INDEX` in `rl/env.py`). Room
 PPO with MultiInputPolicy, warm-started from imitation LSTM CNN backbone. Everything below is CURRENTLY IN PLACE:
 
 **Observation architecture:**
-- `Dict({image: (3, 135, 240), hud: (14,)})`
+- `Dict({image: (3, 135, 240), hud: (10,)})`
 - Custom `BSSMultiInputFeatures` extractor: CNN(image) 512-dim + MLP(hud) 32-dim → concat → linear(544→512) → SB3 policy/value heads
 - CNN backbone frozen for first 200k training steps (protects imitation features from PPO gradient noise)
 
@@ -111,8 +113,7 @@ PPO with MultiInputPolicy, warm-started from imitation LSTM CNN backbone. Everyt
 - `W_HOUR=0.1` × Δhoney(3600s) / 3600 × 1e-4  (clamped ≥0)
 - `W_STALL=-0.03` × step after 180s no progress
 - **PBRS bag-fill:** `γΦ(s') - Φ(s)` where `Φ = pollen_fill × 1.0` (potential-based shaping, Ng-Harada-Russell invariant)
-- **Quest progress:** `W_QUEST_PROGRESS=2.0` × (progress delta / target) when tab is open
-- **Quest completion:** `W_QUEST_COMPLETION=5.0` one-time on transition to Complete!
+- **Quest reward channels REMOVED 2026-08-15** — they double-counted farming activity, biased the policy toward quest-relevant fields (a scripted-strategy leak), and semantic quest understanding is deferred to Phase 5 VLM anyway. Quest OCR observation channels are unchanged; bot still sees quest state and can learn on its own that quest activity correlates with honey. See [EXPERIMENT_LOG.md](EXPERIMENT_LOG.md#2026-08-15-late-evening-quest-reward-channel-removal-design-reversal).
 
 **Hyperparameters:**
 - Learning rate 3e-4, batch size 256, N_STEPS 4096, γ=0.99

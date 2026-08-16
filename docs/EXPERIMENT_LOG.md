@@ -392,9 +392,68 @@ Cold-start template data from wikis provides COVERAGE (many icon types available
 
 ---
 
+### 2026-08-15 (late evening): FULL quest OCR removal (design reversal, expanded)
+
+**Motivation:** initially removed just the quest reward channels (see entry immediately below). Follow-up conversation surfaced that even the observation channels (`quest_tab_open_norm`, `active_quest_count_norm`, `completed_quest_count_norm`, `time_since_quest_tab_seen`) contributed nothing the CNN couldn't already extract from the raw image. Full removal is the philosophically honest position.
+
+**Decision: delete the entire quest OCR subsystem.** Removed:
+- `hud/quest_ocr.py` (deleted; ~200 lines)
+- `HudReader.quest`, `HudReader.read_quest()`
+- `QUEST_READ_EVERY_N_STEPS` constant in `rl/env.py`
+- Four quest slots in `HUD_INDEX` (indices 8-11): `quest_tab_open`, `active_quest_count_norm`, `completed_quest_count_norm`, `time_since_quest_tab_seen`
+- `QUEST_COUNT_NORM_MAX` constant
+- `_last_quest_tab_open_ts`, `_quest_progress_snapshot` env state
+- Quest tab tracker in `_update_hud_history`
+- Quest scalar block in `_compute_hud_vector`
+- Buff channels shifted down: `active_buff_count_norm` 12→8, `total_buff_stacks_norm` 13→9
+- `HUD_DIM`: 14 → 10
+
+**Rationale for full removal beyond just rewards:**
+1. **Redundant with CNN.** The quest panel is a large visually-distinct overlay. The CNN backbone (imitation-warm-started) can perceive "quest tab is open" from the raw image directly. Feeding it as a scalar duplicates information.
+2. **Numbers without semantics.** `progress_norm = 0.4` is a floating scalar the policy cannot ground without knowing what the quest wants. Same for active/completed counts — arbitrary integers with no meaning.
+3. **VLM is a different stack.** OCR investment doesn't accelerate Phase 5 VLM implementation — natural-language quest understanding is architecturally distinct. Keeping OCR now saves no future work.
+4. **Maintenance cost.** `quest_ocr.py` was the biggest bug source in the HUD stack: scroll-invariance detection, bbox description-progress association, template resolution mismatch across window sizes. Ongoing drag with no compensating signal.
+
+**Observation shape change consequences:** dropping HUD_DIM 14→10 invalidates the current checkpoint (`beebot_ppo_latest.zip` cannot load into a 10-dim env). Next training run starts from PPO scratch with the imitation CNN warm-start still applied. Not a real loss — the last 6h run regressed heavily due to the age-dialog trap (ep_rew_mean +0.75 → -3.35 across iters 5-24), so the checkpoint was a liability anyway.
+
+**Result:** deferred (will observe next fresh training run).
+
+**Learning — publishable design principle:** in almost-pure RL, "does this observation channel add signal the raw pixel obs doesn't already provide?" is the correct filter for HUD scalars. Redundant scalars aren't neutral — they add parameters to fit, they duplicate whatever biases the extraction has, and they discourage the CNN from learning to see the game. The purest signal is the raw pixels; every added scalar is a claim that the model can't extract that signal on its own.
+
+**Framing for paper:** this is a two-step design reversal showing the discipline required to hold the almost-pure-RL line: first the reward shaping fell (redundant with Δhoney), then the observation channels fell (redundant with the CNN). The pattern suggests a general lesson — well-intentioned HUD scaffolding accumulates faster than it justifies itself, and requires periodic auditing against the primary signal.
+
+---
+
+### 2026-08-15 (evening): quest reward channel removal (initial cut — later expanded to full OCR removal)
+
+**Motivation:** first 6.2-hour extended training run finished. Independent of the age-dialog trap that dominated that run (documented separately), the user questioned whether the quest reward channels (`W_QUEST_PROGRESS = 2.0`, `W_QUEST_COMPLETION = 5.0`) were worth keeping.
+
+**User's argument (verbatim spirit):**
+- Bot doesn't yet know how to take or turn in quests, so the channels never fire.
+- When bot eventually learns, quest turn-ins pay out honey directly — already rewarded through `Δhoney`.
+- Adding explicit quest reward is shaping toward a specific playstyle.
+
+**Decision: remove both channels.** Kept the quest OCR observation channels (`quest_tab_open_norm`, `quest_progress_norm`, `quest_target_norm`) in the observation vector — bot still SEES quest state and can learn on its own that quest-directed activity correlates with honey. But no direct reward derives from quests.
+
+**Additional rationale developed in discussion:**
+- `W_QUEST_PROGRESS` double-counted farming activity that already earns honey rewards (farming Sunflower for a "Collect Yellow Pollen" quest was rewarded once via `Δhoney` on convert AND once per-tick via quest progress).
+- The per-tick quest progress reward was effectively acting as a "this field is important right now" hint — a mild form of scripted strategic guidance leaking through the reward function.
+- Semantic quest understanding is a HARD CEILING of almost-pure RL (documented above in the 2026-08-15 evening entry) — real quest-directed learning requires Phase 5 VLM integration anyway.
+
+**Code changes:** [rl/reward.py](rl/reward.py) — deleted `W_QUEST_PROGRESS`, `W_QUEST_COMPLETION`, the `_quest_snapshot` state, and the quest-reward computation block in `compute()`. Replaced with a NOTE explaining the removal so future readers don't try to re-add it without knowing why it was cut.
+
+**Result:** deferred (will observe next extended training run).
+
+**Learning — publishable insight:** Reward shaping choices that seem obvious (reward the direct signal of what you want) can leak scripted-strategy hints and interact badly with the primary reward channel via double-counting. For a project committing to almost-pure RL, "does this reward channel add signal that isn't already in Δgold?" is the correct filter — if the answer is no, cut it. The bot learns quest engagement's value through downstream honey rewards or not at all, and either outcome is a legitimate research finding.
+
+**Framing for paper:** this is a design-reversal example demonstrating the specific discipline required to hold the "almost-pure RL" line. Reward shaping is seductive because it seems to accelerate learning, but every shaping term is a hypothesis about strategy that the RL agent is no longer free to falsify.
+
+---
+
 ## Open questions / to-investigate
 
 - Would RecurrentPPO (LSTM-in-PPO from sb3_contrib) help with temporal action smoothing and hive identification?
 - What's the actual pollen→honey conversion rate for a dynamic HPP estimate in PBRS?
 - Can we detect "in a dialogue" via non-template method (movement blocked, HUD partial-occlusion) to eliminate template-per-bear brittleness?
 - How does bot behavior change across bee gates (15 → 25 → 30 → 35) once Phase 2c reward channels enable strategic learning?
+- Post-removal: does bot ever discover quest engagement value from downstream honey rewards alone, or is quest engagement effectively unreachable without either reward shaping or VLM semantic understanding?

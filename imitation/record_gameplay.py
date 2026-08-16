@@ -33,7 +33,7 @@ import numpy as np
 import mss
 import keyboard
 
-from roblox_window import get_roblox_region
+from common.roblox_window import get_roblox_region
 
 _user32 = ctypes.windll.user32
 

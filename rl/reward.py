@@ -75,21 +75,6 @@ class MultiTimescaleReward:
     PBRS_GAMMA = 0.99
     PBRS_POLLEN_REF_MAX = 2_000_000   # Φ = min(1.0, pollen_current / this)
 
-    # Quest progress reward — fires when the quest tab is open AND a tracked
-    # quest's `current` counter increased since the last time we saw that
-    # quest. Reward is proportional to (delta / target) so a tiny progress
-    # bump on a huge target (24 → 50 on a 250,000-pollen quest) gets a
-    # correspondingly small reward, while a big jump on a smaller quest
-    # gets more. Also a one-time completion bonus when quest transitions to
-    # complete=True.
-    #
-    # Only firing when tab is open means the bot must LEARN to open the tab
-    # periodically to earn these rewards — natural incentive for the meta-
-    # behavior "check quest state". Fully aligned with almost-pure-RL vision.
-    W_QUEST_PROGRESS = 2.0        # per full-target progress step; will scale
-                                  # much smaller for typical partial progress
-    W_QUEST_COMPLETION = 5.0      # one-time on transition to complete
-
     # Persistence-based baseline recovery for honey drops.
     # Old logic: any delta > MAX_HONEY_DELTA_PER_TICK gets rejected forever,
     # so a legitimate honey drop (buying gear, session-hop) permanently broke
@@ -151,9 +136,6 @@ class MultiTimescaleReward:
         # Wall-clock timestamp of the last re-baseline event, used to enforce
         # REBASELINE_COOLDOWN_SEC and prevent OCR-bounce ping-pong.
         self._last_rebaseline_ts = None
-        # Quest progress snapshot keyed by raw_line text — used to detect
-        # progress deltas when the quest tab is open.
-        self._quest_snapshot = {}
 
     def reset(self):
         self.honey_history.clear()
@@ -170,10 +152,6 @@ class MultiTimescaleReward:
         # Keep rebaseline cooldown across artificial episode boundaries so
         # ping-pong protection isn't reset every 1024 steps.
         # (self._last_rebaseline_ts intentionally NOT reset here.)
-        # Also keep quest snapshot — quest progress persists across
-        # artificial episode boundaries, so resetting would cause a false
-        # "big delta" on the next tab-open reading.
-        # (self._quest_snapshot intentionally NOT reset here.)
 
     def _honey_delta_over(self, seconds):
         """Estimated Δhoney over the last `seconds`."""
@@ -355,44 +333,6 @@ class MultiTimescaleReward:
                 pbrs_shaping = self.PBRS_GAMMA * current_potential - self.last_potential
             self.last_potential = current_potential
 
-        # Quest progress reward — only when the quest tab is currently open
-        # AND OCR gave us fresh quest state. Sum progress deltas across all
-        # tracked quests + completion bonuses.
-        quest_reward = 0.0
-        if hud_state.get("quest_tab_open"):
-            for q in hud_state.get("quests", []):
-                # Key by quest_key (stripped progress) not raw_line — raw
-                # text changes every time progress ticks up, would look like
-                # a new quest each read.
-                key = q.get("quest_key")
-                if key is None:
-                    continue
-                prev = self._quest_snapshot.get(key)
-                cur = q.get("current")
-                tgt = q.get("target")
-                is_complete = q.get("complete", False)
-
-                if prev is None:
-                    # First time seeing this quest — no delta to reward, just
-                    # store the snapshot for future comparison
-                    pass
-                elif is_complete and not prev.get("complete", False):
-                    # Quest transitioned to complete — one-time bonus
-                    quest_reward += self.W_QUEST_COMPLETION
-                elif (cur is not None and tgt is not None and tgt > 0
-                      and prev.get("current") is not None
-                      and cur > prev["current"]):
-                    delta = cur - prev["current"]
-                    # Reward proportional to fraction of target achieved this step
-                    quest_reward += self.W_QUEST_PROGRESS * (delta / tgt)
-
-                # Update snapshot regardless
-                self._quest_snapshot[key] = {
-                    "current": cur,
-                    "target": tgt,
-                    "complete": is_complete,
-                }
-
         # Reward is blended; scale down absolute honey deltas so per-step
         # reward stays in a range PPO handles well (roughly [-1, +10])
         scale = 1e-4  # 10k honey ≈ +1 reward
@@ -402,7 +342,6 @@ class MultiTimescaleReward:
             + self.W_HOUR * delta_hour * scale / 3600
             + stall_pen
             + pbrs_shaping
-            + quest_reward
         )
 
         self.total_reward_this_episode += reward

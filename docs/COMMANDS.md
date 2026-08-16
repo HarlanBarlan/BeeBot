@@ -21,6 +21,18 @@ cd C:\ClaudeWorkspace\BeeBot
 
 ---
 
+## ⚠️ Fresh start required after 2026-08-15 quest OCR removal
+
+`HUD_DIM` changed from 14 to 10. The existing checkpoint `models/beebot_ppo_latest.zip` will NOT load into the new env — SB3 will error out on the observation-space shape mismatch.
+
+**Before the next training run:** archive the old checkpoint so `train_ppo` can't try to resume from it:
+```powershell
+Move-Item models\beebot_ppo_latest.zip models\beebot_ppo_pre-quest-removal.zip
+```
+Do the same for `beebot_ppo_best.zip` if it exists. The imitation LSTM warm-start (`models/beebot_lstm_best.pt`) is UNAFFECTED — training will still warm-start the CNN backbone from it.
+
+---
+
 ## Daily training
 
 ### Start training (basic)
@@ -137,17 +149,6 @@ http://<training-machine-ip>:6006
 .\.venv\Scripts\python.exe -m hud.honey_ocr
 ```
 
-### Test quest tab reader (open the quest tab in-game first)
-```powershell
-.\.venv\Scripts\python.exe -m hud.quest_ocr
-```
-
-### Sample pixel colors for quest tab tuning
-```powershell
-.\.venv\Scripts\python.exe -m hud.quest_ocr --sample-colors
-```
-Open the quest tab in-game first. Prints the actual BGR colors at each sample point. Use to tune `hud/probes/quest_panel_bg_color.txt` if detection is unreliable.
-
 ### Test buff classifier + show detected buff strip region
 ```powershell
 .\.venv\Scripts\python.exe -m hud.buff_classifier
@@ -160,7 +161,7 @@ Saves `hud/probes/debug_buff_strip.png` — inspect to see what region the class
 
 ### General snip command
 ```powershell
-.\.venv\Scripts\python.exe snip_template.py hud/probes/<template_name>
+.\.venv\Scripts\python.exe -m scripts.snip_template hud/probes/<template_name>
 ```
 (or `bridges/probes/<template_name>` for dialogue rescue templates)
 
@@ -170,29 +171,24 @@ Do the setup in-game FIRST (open the right menu, position character, etc), THEN 
 
 **Dialogue rescue for a specific bear** — snip while bear dialogue is open:
 ```powershell
-.\.venv\Scripts\python.exe snip_template.py bridges/probes/dialogue_continue_black_bear
-.\.venv\Scripts\python.exe snip_template.py bridges/probes/dialogue_continue_panda_bear
+.\.venv\Scripts\python.exe -m scripts.snip_template bridges/probes/dialogue_continue_black_bear
+.\.venv\Scripts\python.exe -m scripts.snip_template bridges/probes/dialogue_continue_panda_bear
 ```
 
 **Buff icon** — snip while that buff is active in-game (snip tightly around JUST the icon graphic, no stack-count text):
 ```powershell
-.\.venv\Scripts\python.exe snip_template.py hud/probes/buff_haste
-.\.venv\Scripts\python.exe snip_template.py hud/probes/buff_focus
-```
-
-**Quest tab open indicator** — snip inside the OPEN quest panel (stable element like a category header background):
-```powershell
-.\.venv\Scripts\python.exe snip_template.py hud/probes/quest_tab_indicator
+.\.venv\Scripts\python.exe -m scripts.snip_template hud/probes/buff_haste
+.\.venv\Scripts\python.exe -m scripts.snip_template hud/probes/buff_focus
 ```
 
 **Pollen bar frame** — snip the pollen HUD element (includes label + bar):
 ```powershell
-.\.venv\Scripts\python.exe snip_template.py hud/probes/pollen_bar_frame
+.\.venv\Scripts\python.exe -m scripts.snip_template hud/probes/pollen_bar_frame
 ```
 
 **Honey display** — snip the honey number display:
 ```powershell
-.\.venv\Scripts\python.exe snip_template.py hud/probes/honey_display
+.\.venv\Scripts\python.exe -m scripts.snip_template hud/probes/honey_display
 ```
 
 ---
@@ -209,12 +205,6 @@ Example for the default:
 0.0 0.05 0.18 0.12
 ```
 Comments (lines starting with `#`) are ignored.
-
-### Quest panel background color override
-Save to `hud/probes/quest_panel_bg_color.txt` — one line with 3 ints (BGR order):
-```
-185 170 140
-```
 
 ---
 
@@ -292,7 +282,7 @@ If PyTorch fails to install, `setup.ps1` should handle CUDA wheel index automati
 
 ### Verify GPU works
 ```powershell
-.\.venv\Scripts\python.exe test_gpu.py
+.\.venv\Scripts\python.exe -m scripts.test_gpu
 ```
 
 ---

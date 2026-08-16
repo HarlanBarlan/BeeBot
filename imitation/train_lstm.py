@@ -23,8 +23,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from dataset import GameplaySequenceDataset
-from model import BeeBotLSTM
+from .dataset import GameplaySequenceDataset
+from .model import BeeBotLSTM
 
 # --- hyperparams ------------------------------------------------------------
 SEQ_LEN = 30                # frames per window (3 seconds at 10 FPS)

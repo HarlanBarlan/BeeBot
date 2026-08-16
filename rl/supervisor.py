@@ -18,7 +18,7 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from roblox_window import get_roblox_region
+from common.roblox_window import get_roblox_region
 
 
 BSS_PLACE_ID = 1537690962           # public place ID from roblox.com/games/1537690962

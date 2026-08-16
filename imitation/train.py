@@ -17,8 +17,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from dataset import GameplayDataset
-from model import BeeBotCNN
+from .dataset import GameplayDataset
+from .model import BeeBotCNN
 
 # --- hyperparams ------------------------------------------------------------
 BATCH_SIZE = 64

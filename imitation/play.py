@@ -34,10 +34,10 @@ import torch
 import pydirectinput
 import keyboard
 
-from roblox_window import get_roblox_region
-from robo_input import move_mouse
-from model import BeeBotCNN, BeeBotLSTM
-from dataset import MODEL_INPUT_W, MODEL_INPUT_H, GAME_RELEVANT_KEYS
+from common.roblox_window import get_roblox_region
+from common.robo_input import move_mouse
+from .model import BeeBotCNN, BeeBotLSTM
+from .dataset import MODEL_INPUT_W, MODEL_INPUT_H, GAME_RELEVANT_KEYS
 from hud.reader import HudReader
 from bridges.orchestrator import Orchestrator
 

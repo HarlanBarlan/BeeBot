@@ -9,20 +9,18 @@ Each detector is independently loadable — missing templates just mean
 that field is absent from the returned state dict. Bridges should
 degrade gracefully.
 
-Current detectors (add more as we build them):
-  - pollen_bar → state["pollen_fill"] as float 0.0-1.0
+Current detectors:
+  - pollen_bar       → state["pollen_fill"] as float 0.0-1.0
+  - honey_ocr        → state["honey"] as int
+  - buff_classifier  → state["buffs"] as list[{"name","stacks"}]
 
 Planned (stubs):
-  - honey_ocr → state["honey"] as int
   - tickets_ocr → state["tickets"] as int
-  - buff_bar → state["buffs"] as list[{"name","stacks","timer"}]
-  - boss_bar → state["boss_hp_pct"] as float or None
-  - quest_tracker → state["quests"] as list[{"text","progress"}]
+  - boss_bar    → state["boss_hp_pct"] as float or None
 """
 
 from .pollen_ocr import PollenOCRReader
 from .honey_ocr import HoneyOCRReader
-from .quest_ocr import QuestOCRReader
 from .buff_classifier import BuffClassifier
 
 
@@ -30,14 +28,11 @@ class HudReader:
     def __init__(self):
         self.pollen = PollenOCRReader()
         self.honey = HoneyOCRReader()
-        self.quest = QuestOCRReader()
         self.buffs = BuffClassifier()
 
     def read(self, frame_bgr):
         """Fast HUD read — pollen + honey (numbers displayed every frame).
-        Called every HUD_READ_EVERY_N_STEPS (~1s) by env.py. Does NOT
-        include quest state — quest OCR is expensive and rate-limited
-        separately via read_quest()."""
+        Called every HUD_READ_EVERY_N_STEPS (~1s) by env.py."""
         state = {}
 
         if self.pollen.is_ready():
@@ -54,19 +49,9 @@ class HudReader:
                 state["honey"] = honey
                 state["honey_confidence"] = conf
 
-        # future: tickets, buffs, boss
+        # future: tickets, boss
 
         return state
-
-    def read_quest(self, frame_bgr):
-        """Dedicated quest OCR — expensive (whole panel + many text lines).
-        Env calls this at a slower cadence (QUEST_READ_EVERY_N_STEPS).
-        Returns {quest_tab_open: bool, quests: list} or empty dict if
-        the reader isn't ready."""
-        if not self.quest.is_ready():
-            return {}
-        tab_open, quests = self.quest.read_quests(frame_bgr)
-        return {"quest_tab_open": tab_open, "quests": quests}
 
     def read_buffs(self, frame_bgr):
         """Dedicated buff read — expensive (template match per buff type +
@@ -80,7 +65,6 @@ class HudReader:
         print("[hud] detector status:")
         print(f"  pollen (OCR)  : {'READY' if self.pollen.is_ready() else 'MISSING TEMPLATE'}")
         print(f"  honey (OCR)   : {'READY' if self.honey.is_ready() else 'MISSING TEMPLATE'}")
-        print(f"  quest (OCR)   : {'READY' if self.quest.is_ready() else 'MISSING TEMPLATE (snip hud/probes/quest_tab_indicator.png)'}")
         print(f"  buffs (tmpl)  : {len(self.buffs.templates)} template(s) loaded "
               f"(snip more via hud/probes/buff_<name>.png)")
 

@@ -14,8 +14,8 @@ import mss
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from robo_input import click_at
-from roblox_window import get_roblox_region
+from common.robo_input import click_at
+from common.roblox_window import get_roblox_region
 
 
 def find_and_click(template_path, confidence=0.70, wait_after=0.5, max_attempts=3):
