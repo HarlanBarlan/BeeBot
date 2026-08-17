@@ -71,13 +71,13 @@ class MilestoneTracker:
     # (10x/100x/1000x jumps from comma/period parsing errors) that would
     # otherwise falsely fire every threshold at once.
     #
-    # Bumped from 5 to 30 on 2026-08-17 after seeing 100M-10B thresholds
-    # all falsely fire when OCR misreads persisted for 5+ consecutive
-    # reads. 30 requires ~60s of continuous same-direction misreads to
-    # confirm, which is essentially never seen. Real honey growth is
-    # far slower than milestone spacing (~10x jumps), so waiting 60s to
-    # confirm doesn't delay any real crossing meaningfully.
-    HONEY_CONFIRMATION_READS = 30
+    # With the median-of-60 buffer added 2026-08-17, individual outliers
+    # can't move the check-value even if they slip past the ratio filter,
+    # so N=10 is plenty here. Combined with the sequential gate, a false
+    # fire would require a MAJORITY of the last 60 reads to be identically-
+    # misread AND for the resulting median to sustain above threshold for
+    # 10 more consecutive checks — essentially impossible.
+    HONEY_CONFIRMATION_READS = 10
 
     # Ratio-based decimal-shift rejection (same patterns as reward.py).
     # If a new reading is 10x/100x/1000x of the last-seen valid reading,
@@ -108,6 +108,11 @@ class MilestoneTracker:
         # Keyed by threshold value: {5_000_000: 3, 10_000_000: 1, ...}.
         # Any read that falls below a threshold resets its counter to 0.
         self._honey_confirmations = {}
+        # Rolling buffer of recent ratio-filtered honey reads. Median of
+        # this buffer is what threshold checks use — robust to individual
+        # misreads that slip past the ratio filter (digit-drop errors,
+        # unusual OCR patterns) as long as they're a minority of recent reads.
+        self._honey_reads = []
         # Last-seen honey reading, for decimal-shift ratio comparison.
         # Persisted across sessions so Layer 1 protection is live from
         # read 1 of every future run. Without persistence, the FIRST HUD
@@ -155,50 +160,66 @@ class MilestoneTracker:
     def check_honey(self, step, honey):
         """Called each HUD read. No-ops if honey is None (OCR failed).
 
-        Two layers of outlier defense against OCR decimal-shift misreads:
-        1. Ratio check — if new reading is 10x/100x/1000x of last-seen,
-           reject without touching any counter.
-        2. Confirmation — requires HONEY_CONFIRMATION_READS consecutive
-           readings above a threshold before firing.
+        Defense layers against OCR misreads (in order):
+        1. Ratio check — reject exact 10x/100x/1000x decimal-shift patterns.
+        2. Rolling median — maintain a 60-read buffer, use MEDIAN for
+           threshold checks. Robust to any outlier pattern (not just the
+           ratio-band ones) as long as fewer than 30 of the last 60 reads
+           are outliers.
+        3. Confirmation — median must clear a threshold for N consecutive
+           reads before firing.
+        4. Sequential gate — only the next unfired threshold can fire.
+           Prevents mass-fires from a single burst of high misreads.
         """
         if honey is None:
             return
-        # Layer 1: decimal-shift ratio rejection. Only kicks in after we
-        # have a baseline reading to compare against.
+        # Layer 1: decimal-shift ratio rejection.
         if self._last_seen_honey is not None and self._last_seen_honey > 0:
             ratio = honey / self._last_seen_honey
             if any(low <= ratio <= high for low, high in self.DECIMAL_SHIFT_RATIOS):
-                # Almost certainly an OCR decimal-shift error. Reject
-                # without updating last_seen_honey OR touching any counter.
                 return
-        # Update baseline. Persist periodically (not every read — every ~500
-        # reads is enough since a stale baseline of a few minutes is fine).
-        # Persistence-on-every-milestone-fire also catches the important
-        # case where baseline just moved across a threshold.
+        # Update baseline + persist on meaningful movement.
         prev = self._last_seen_honey
         self._last_seen_honey = honey
         if prev is None or abs(honey - (prev or 0)) > (prev or 1) * 0.05:
-            # Meaningful movement (>5%) or first-ever read — persist.
             self._persist()
-        # Layer 2: threshold confirmation counter.
+
+        # Layer 2: rolling median buffer. Add the (already ratio-filtered)
+        # read, keep the last 60. Use median for threshold checks — even if
+        # many reads slip past ratio-filter, they can't move the median
+        # unless they're a MAJORITY.
+        self._honey_reads.append(honey)
+        if len(self._honey_reads) > 60:
+            self._honey_reads.pop(0)
+        if len(self._honey_reads) < 10:
+            return   # not enough data for a stable median yet
+        sorted_reads = sorted(self._honey_reads)
+        median = sorted_reads[len(sorted_reads) // 2]
+
+        # Layer 3 + 4: sequential threshold check using median.
+        # Sequential gate: find the LOWEST unfired threshold. Only it can
+        # advance its counter — even if median >= 50M, 10M must fire first.
+        next_threshold = None
         for threshold in HONEY_THRESHOLDS:
-            key = f"honey_{threshold}"
-            if key in self._fired:
-                continue
-            if honey >= threshold:
-                self._honey_confirmations[threshold] = self._honey_confirmations.get(threshold, 0) + 1
-                if self._honey_confirmations[threshold] >= self.HONEY_CONFIRMATION_READS:
-                    self._fired.add(key)
-                    self._honey_confirmations.pop(threshold, None)
-                    self._persist()
-                    self._record(
-                        "honey_threshold",
-                        f"honey crossed {threshold:,} at step {step:,}",
-                        {"step": step, "threshold": threshold, "honey": int(honey)},
-                    )
-            else:
-                # Reading dropped below this threshold — reset its counter.
-                self._honey_confirmations.pop(threshold, None)
+            if f"honey_{threshold}" not in self._fired:
+                next_threshold = threshold
+                break
+        if next_threshold is None:
+            return   # all thresholds already fired
+        key = f"honey_{next_threshold}"
+        if median >= next_threshold:
+            self._honey_confirmations[next_threshold] = self._honey_confirmations.get(next_threshold, 0) + 1
+            if self._honey_confirmations[next_threshold] >= self.HONEY_CONFIRMATION_READS:
+                self._fired.add(key)
+                self._honey_confirmations.pop(next_threshold, None)
+                self._persist()
+                self._record(
+                    "honey_threshold",
+                    f"honey crossed {next_threshold:,} at step {step:,} (median {median:,.0f})",
+                    {"step": step, "threshold": next_threshold, "honey": int(median)},
+                )
+        else:
+            self._honey_confirmations.pop(next_threshold, None)
 
     def check_step(self, step):
         """Called periodically (e.g. once per rollout, not per step)."""

@@ -587,23 +587,37 @@ class BSSEnv(gym.Env):
                 and self._step_count % 4096 == 0
                 and self._step_count != self._last_rate_report_step):
             self._last_rate_report_step = self._step_count
-            # Use reward's cleaned honey_history — no raw OCR spikes.
-            if self._reward.honey_history:
+            # Use MEDIAN honey around both window endpoints instead of raw
+            # point values. Even reward.honey_history contains post-rebaseline
+            # entries that reflect misreads — a single poisoned endpoint made
+            # rate print +/-68M/-76M swings in prior sessions. Median of the
+            # 11 samples nearest each endpoint is robust to single-read outliers.
+            if len(self._reward.honey_history) >= 22:
                 now_ts = time.time()
                 window_start = now_ts - (4096 / 5.0)   # ~14 min at 5fps
-                oldest_ts, oldest_honey = None, None
-                for ts, h in self._reward.honey_history:
+                # Find the index of the first entry inside the window.
+                start_idx = None
+                for i, (ts, _) in enumerate(self._reward.honey_history):
                     if ts >= window_start:
-                        oldest_ts, oldest_honey = ts, h
+                        start_idx = i
                         break
-                if oldest_ts is not None:
-                    window_secs = now_ts - oldest_ts
-                    if window_secs > 60:  # need a real window
-                        gain = honey - oldest_honey
-                        rate = gain / (window_secs / 3600)
-                        iteration = self._step_count // 4096
-                        print(f"[rate] iter ~{iteration}: {gain:+,.0f} honey over ~{window_secs/60:.0f} min = {rate:+,.0f}/hr "
-                              f"(honey-only; drops when bot does non-honey activity)")
+                if start_idx is not None:
+                    hist = list(self._reward.honey_history)
+                    # 11 samples centered around the start endpoint (or as
+                    # many as we can grab if start_idx is near the front).
+                    lo = max(0, start_idx - 5)
+                    start_window = [h for _, h in hist[lo:lo + 11]]
+                    end_window = [h for _, h in hist[-11:]]
+                    if len(start_window) >= 5 and len(end_window) >= 5:
+                        start_honey = sorted(start_window)[len(start_window) // 2]
+                        end_honey = sorted(end_window)[len(end_window) // 2]
+                        window_secs = now_ts - hist[start_idx][0]
+                        if window_secs > 60:
+                            gain = end_honey - start_honey
+                            rate = gain / (window_secs / 3600)
+                            iteration = self._step_count // 4096
+                            print(f"[rate] iter ~{iteration}: {gain:+,.0f} honey over ~{window_secs/60:.0f} min = {rate:+,.0f}/hr "
+                                  f"(median-smoothed; drops when bot does non-honey activity)")
 
         # We do NOT terminate on ESC here — that would just start a new
         # episode. Stopping training is handled by StopOnKeyCallback in
