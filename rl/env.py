@@ -697,6 +697,7 @@ class BSSEnv(gym.Env):
             rews = [e["ep_rew_mean"] for e in metrics_history if e.get("ep_rew_mean") is not None]
             if rews:
                 print(f"    ep_rew_mean:   first={rews[0]:+.3f}  "
+                      f"avg={sum(rews)/len(rews):+.3f}  "
                       f"best={max(rews):+.3f}  worst={min(rews):+.3f}  "
                       f"last={rews[-1]:+.3f}  "
                       f"(delta {rews[-1]-rews[0]:+.3f})")
@@ -705,12 +706,14 @@ class BSSEnv(gym.Env):
             evs = [e["explained_variance"] for e in metrics_history if e.get("explained_variance") is not None]
             if evs:
                 print(f"    explained_var: first={evs[0]:+.3f}  "
+                      f"avg={sum(evs)/len(evs):+.3f}  "
                       f"best={max(evs):+.3f}  worst={min(evs):+.3f}  "
                       f"last={evs[-1]:+.3f}")
             # value_loss — spikes here indicate reward outliers.
             vls = [e["value_loss"] for e in metrics_history if e.get("value_loss") is not None]
             if vls:
                 print(f"    value_loss:    first={vls[0]:.4f}  "
+                      f"avg={sum(vls)/len(vls):.4f}  "
                       f"best={min(vls):.4f}  worst={max(vls):.4f}  "
                       f"last={vls[-1]:.4f}")
         print(line)
