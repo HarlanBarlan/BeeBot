@@ -35,6 +35,7 @@ a hobby-scale Roblox RL bot.
 import ctypes
 from collections import deque
 from ctypes import wintypes
+from datetime import datetime
 import math
 import time
 from pathlib import Path
@@ -381,6 +382,13 @@ class BSSEnv(gym.Env):
         self._popup_dismissals = 0
         self._dialogue_rescues_template = 0    # burst-clicked at matched coords
         self._dialogue_rescues_blind = 0       # no template match, blind fallback
+        # When rescue keeps failing (no template match AND blind clicks
+        # don't clear the stall), dump the frame to disk so we can snip
+        # a new template later. Log-spaced at failure counts to catch
+        # progression through a genuinely long stall; capped per session
+        # to avoid disk fill during multi-hour lockups.
+        self._unknown_dialogue_saves = 0
+        self._unknown_dialogue_saved_at = set()   # failure counts already saved this stall
         self._reward_rebaselines = 0           # honey outlier re-baseline events
         self._last_status_print_ts = time.time()
         self._cached_hud = {}          # last successful HUD read, reused between OCR calls
@@ -679,6 +687,9 @@ class BSSEnv(gym.Env):
         print(f"  Dialogue rescues:   {self._dialogue_rescues_template + self._dialogue_rescues_blind}  "
               f"({self._dialogue_rescues_template} template-match, "
               f"{self._dialogue_rescues_blind} blind)")
+        if self._unknown_dialogue_saves > 0:
+            print(f"  Stuck frames dumped: {self._unknown_dialogue_saves}  "
+                  f"(see logs/unknown_dialogues/ — snip templates from these)")
         if session_milestones:
             print(f"  Milestones this session ({len(session_milestones)}):")
             for m in session_milestones:
@@ -1089,6 +1100,28 @@ class BSSEnv(gym.Env):
                       f"If bot is stuck in a menu/dialogue snip a template with: "
                       f"snip_template.py bridges/probes/dialogue_continue_<name>")
 
+            # Dump frame to disk at log-spaced failure counts so we can snip
+            # a new template from a genuinely-stuck screen later. Cap total
+            # saves per session so a multi-hour lockup doesn't fill disk.
+            SAVE_AT_FAILURES = {10, 30, 60, 120, 240}
+            MAX_SAVES_PER_SESSION = 20
+            if (self._consecutive_failed_rescues in SAVE_AT_FAILURES
+                    and self._consecutive_failed_rescues not in self._unknown_dialogue_saved_at
+                    and self._unknown_dialogue_saves < MAX_SAVES_PER_SESSION):
+                try:
+                    dump_dir = Path("logs/unknown_dialogues")
+                    dump_dir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    fname = f"stuck_step{self._step_count}_fails{self._consecutive_failed_rescues}_{ts}.png"
+                    cv2.imwrite(str(dump_dir / fname), frame)
+                    self._unknown_dialogue_saves += 1
+                    self._unknown_dialogue_saved_at.add(self._consecutive_failed_rescues)
+                    print(f"[env t={self._step_count}] saved stuck frame to "
+                          f"logs/unknown_dialogues/{fname} "
+                          f"(session save {self._unknown_dialogue_saves}/{MAX_SAVES_PER_SESSION})")
+                except Exception as e:
+                    print(f"[env] failed to save unknown-dialogue frame: {e}")
+
             # After 5 consecutive failures, try blind clicks at recently-
             # working positions (menu-close buttons, dialogue continue, etc)
             if (self._consecutive_failed_rescues >= 5
@@ -1147,6 +1180,7 @@ class BSSEnv(gym.Env):
             if len(self._rescue_positions_seen) > 10:
                 self._rescue_positions_seen = self._rescue_positions_seen[-10:]
         self._consecutive_failed_rescues = 0
+        self._unknown_dialogue_saved_at.clear()   # fresh save slots for next stall
         self._dialogue_rescues_template += 1
 
         print(f"[env t={self._step_count}] dialogue-rescue: burst {DIALOGUE_RESCUE_CLICK_BURST} "
