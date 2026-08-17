@@ -109,19 +109,30 @@ class MilestoneTracker:
         # Any read that falls below a threshold resets its counter to 0.
         self._honey_confirmations = {}
         # Last-seen honey reading, for decimal-shift ratio comparison.
-        # None until first non-rejected reading arrives.
+        # Persisted across sessions so Layer 1 protection is live from
+        # read 1 of every future run. Without persistence, the FIRST HUD
+        # read of a fresh session unconditionally sets the baseline — if
+        # that first read is an OCR decimal-shift misread, all subsequent
+        # correct reads get rejected as "shifts" and the misreads climb
+        # the confirmation counter, false-firing every threshold up to
+        # the shifted value (this is exactly what happened on 2026-08-17
+        # when 10M/25M/50M all fired at step 308 with Fredrick at ~7.47M).
         self._last_seen_honey = None
         if STATE_PATH.exists():
             try:
                 data = json.loads(STATE_PATH.read_text())
                 self._fired = set(data.get("fired", []))
+                self._last_seen_honey = data.get("last_seen_honey")
             except (json.JSONDecodeError, IOError):
                 # Corrupt state file — start fresh rather than crash training
                 self._fired = set()
 
     def _persist(self):
         try:
-            STATE_PATH.write_text(json.dumps({"fired": sorted(self._fired)}))
+            STATE_PATH.write_text(json.dumps({
+                "fired": sorted(self._fired),
+                "last_seen_honey": self._last_seen_honey,
+            }))
         except IOError:
             pass   # non-fatal; milestone re-fires next time is acceptable
 
@@ -160,7 +171,15 @@ class MilestoneTracker:
                 # Almost certainly an OCR decimal-shift error. Reject
                 # without updating last_seen_honey OR touching any counter.
                 return
+        # Update baseline. Persist periodically (not every read — every ~500
+        # reads is enough since a stale baseline of a few minutes is fine).
+        # Persistence-on-every-milestone-fire also catches the important
+        # case where baseline just moved across a threshold.
+        prev = self._last_seen_honey
         self._last_seen_honey = honey
+        if prev is None or abs(honey - (prev or 0)) > (prev or 1) * 0.05:
+            # Meaningful movement (>5%) or first-ever read — persist.
+            self._persist()
         # Layer 2: threshold confirmation counter.
         for threshold in HONEY_THRESHOLDS:
             key = f"honey_{threshold}"
