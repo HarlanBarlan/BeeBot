@@ -371,11 +371,17 @@ class BSSEnv(gym.Env):
         self._last_health_check = 0.0
         self._step_count = 0
         self._session_start_honey = None
+        self._session_start_ts = time.time()
         self._last_status_print_step = 0
         # Tracks last step count where we printed the per-iteration honey/hr
         # rate line. Prevents double-print when step count hits the boundary
         # across multiple env.step() calls in the same iteration.
         self._last_rate_report_step = 0
+        # Session counters for the end-of-run summary table.
+        self._popup_dismissals = 0
+        self._dialogue_rescues_template = 0    # burst-clicked at matched coords
+        self._dialogue_rescues_blind = 0       # no template match, blind fallback
+        self._reward_rebaselines = 0           # honey outlier re-baseline events
         self._last_status_print_ts = time.time()
         self._cached_hud = {}          # last successful HUD read, reused between OCR calls
         self._stalled_since_step = None
@@ -618,6 +624,70 @@ class BSSEnv(gym.Env):
             except Exception:
                 pass
 
+    def print_session_summary(self):
+        """Print a human-readable end-of-session summary table.
+
+        Called from train_ppo.py after the training loop stops (ESC or
+        exception). Everything shown is from env-side counters + reward
+        function state — no dependency on SB3 model. SB3's own rollout
+        table already prints separately on iteration boundaries.
+        """
+        now_ts = time.time()
+        duration_s = now_ts - self._session_start_ts
+        h = int(duration_s // 3600)
+        m = int((duration_s % 3600) // 60)
+        s = int(duration_s % 60)
+
+        # Honey delta. Prefer the reward function's cleaned history for
+        # end-honey (avoids OCR spike as the final displayed value).
+        end_honey = None
+        if self._reward.honey_history:
+            end_honey = self._reward.honey_history[-1][1]
+        honey_gain = None
+        rate_per_hr = None
+        if self._session_start_honey is not None and end_honey is not None:
+            honey_gain = end_honey - self._session_start_honey
+            if duration_s > 60:
+                rate_per_hr = honey_gain / (duration_s / 3600)
+
+        # Iteration approximation — SB3 doesn't own step_count; ours does.
+        iterations = self._step_count // 4096
+
+        # Milestones fired this session (from tracker's session-scoped list).
+        session_milestones = getattr(self._milestones, "fired_this_session", [])
+
+        # Format
+        line = "=" * 60
+        print()
+        print(line)
+        print("  SESSION SUMMARY")
+        print(line)
+        print(f"  Duration:           {h}h {m}m {s}s")
+        print(f"  Env steps this run: {self._step_count:,}")
+        print(f"  Iterations (~):     {iterations}")
+        if self._session_start_honey is not None:
+            print(f"  Starting honey:     {self._session_start_honey:>15,.0f}")
+        if end_honey is not None:
+            print(f"  Ending honey:       {end_honey:>15,.0f}")
+        if honey_gain is not None:
+            sign = "+" if honey_gain >= 0 else ""
+            print(f"  Honey gained:       {sign}{honey_gain:>14,.0f}")
+        if rate_per_hr is not None:
+            sign = "+" if rate_per_hr >= 0 else ""
+            print(f"  Avg honey/hr:       {sign}{rate_per_hr:>14,.0f}  (honey-only; drops when bot does non-honey activity)")
+        print(f"  Popup dismissals:   {self._popup_dismissals}")
+        print(f"  Dialogue rescues:   {self._dialogue_rescues_template + self._dialogue_rescues_blind}  "
+              f"({self._dialogue_rescues_template} template-match, "
+              f"{self._dialogue_rescues_blind} blind)")
+        if session_milestones:
+            print(f"  Milestones this session ({len(session_milestones)}):")
+            for m in session_milestones:
+                print(f"    - {m.get('note', '(unknown)')}")
+        else:
+            print(f"  Milestones this session: none")
+        print(line)
+        print()
+
     # --- internals ----------------------------------------------------------
 
     def _empty_observation(self):
@@ -686,8 +756,10 @@ class BSSEnv(gym.Env):
                 and self._popup_handler.is_ready()
                 and self._region is not None
                 and not self._paused):
-            self._popup_handler.check_and_dismiss(
+            dismissed = self._popup_handler.check_and_dismiss(
                 frame, self._region, self._popup_click)
+            if dismissed is not None:
+                self._popup_dismissals += 1
         hud = self._cached_hud
 
         # Downsize + normalize + CHW for observation
@@ -1005,6 +1077,7 @@ class BSSEnv(gym.Env):
                     except Exception: pass
                     self._held_keys.discard("e")
                 self._e_suppress_until_step = self._step_count + POST_RESCUE_E_SUPPRESS_STEPS
+                self._dialogue_rescues_blind += 1
                 print(f"[env t={self._step_count}] BLIND rescue — clicked at "
                       f"{self._rescue_positions_seen[-3:]} (no template match "
                       f"but stall persistent). Also suppressed E.")
@@ -1043,6 +1116,7 @@ class BSSEnv(gym.Env):
             if len(self._rescue_positions_seen) > 10:
                 self._rescue_positions_seen = self._rescue_positions_seen[-10:]
         self._consecutive_failed_rescues = 0
+        self._dialogue_rescues_template += 1
 
         print(f"[env t={self._step_count}] dialogue-rescue: burst {DIALOGUE_RESCUE_CLICK_BURST} "
               f"clicks at ({cx},{cy}) (match conf {max_val:.2f}) — "

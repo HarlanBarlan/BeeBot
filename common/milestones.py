@@ -98,6 +98,10 @@ class MilestoneTracker:
     def __init__(self):
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         JSONL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # Notes fired THIS session (separate from persistent self._fired).
+        # Used by env.print_session_summary() to show what crossed during
+        # the run vs what was already persisted from prior sessions.
+        self.fired_this_session = []
         self._fired = set()
         # For each pending honey threshold, track how many consecutive
         # reads have exceeded it. Fires only after N consecutive confirmations.
@@ -134,6 +138,7 @@ class MilestoneTracker:
                 f.write(json.dumps(entry) + "\n")
         except IOError:
             pass   # non-fatal — the [milestone] print below still lands in stdout
+        self.fired_this_session.append(entry)
         print(f"[milestone] {note}")
 
     def check_honey(self, step, honey):

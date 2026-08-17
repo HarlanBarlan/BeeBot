@@ -146,8 +146,8 @@ def main():
     # is unstable for our sparse-reward env — value function chases a
     # moving target. Kept the Monitor addition (real fix), reverted the
     # VecNormalize part.
-    env = BSSEnv()
-    env = Monitor(env)
+    bss_env = BSSEnv()
+    env = Monitor(bss_env)
 
     # Multi-input feature extractor: CNN(image) + MLP(hud scalars) -> concat.
     # See rl/policy.py docstring for the rationale — TL;DR the value function
@@ -239,6 +239,13 @@ def main():
         print("[rl] KeyboardInterrupt — saving and stopping")
     finally:
         model.save(str(MODELS_DIR / "beebot_ppo_latest"))
+        # Print human-readable session summary BEFORE closing env so all
+        # its counters are still valid. Wrap in try so a summary error
+        # doesn't prevent the checkpoint save from being reported.
+        try:
+            bss_env.print_session_summary()
+        except Exception as e:
+            print(f"[summary] failed to print session summary: {e}")
         env.close()
         release_cursor_clip()  # belt-and-suspenders in case env.close didn't run
         print("[rl] stopped — saved beebot_ppo_latest.zip")
