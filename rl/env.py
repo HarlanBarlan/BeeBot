@@ -372,6 +372,10 @@ class BSSEnv(gym.Env):
         self._step_count = 0
         self._session_start_honey = None
         self._last_status_print_step = 0
+        # Tracks last step count where we printed the per-iteration honey/hr
+        # rate line. Prevents double-print when step count hits the boundary
+        # across multiple env.step() calls in the same iteration.
+        self._last_rate_report_step = 0
         self._last_status_print_ts = time.time()
         self._cached_hud = {}          # last successful HUD read, reused between OCR calls
         self._stalled_since_step = None
@@ -552,14 +556,27 @@ class BSSEnv(gym.Env):
             if honey is not None and self._session_start_honey is not None:
                 delta = honey - self._session_start_honey
                 gained = f"  (+{delta:,.0f} this session)"
-            # Rolling honey/hr rate over last 15 min. Uses the reward
-            # function's honey_history because it's already decimal-shift
-            # filtered — env's own history contains raw OCR reads including
-            # 10x/100x/1000x misreads that would swing the rate wildly.
-            rate_str = ""
-            if honey is not None and self._reward.honey_history:
+            print(f"[env t={self._step_count:6d} {live_fps:.1f}fps] pollen={pollen_str}  honey={honey_str}{gained}  "
+                  f"total_reward={self._reward.total_reward_this_episode:.2f}")
+
+        # Per-iteration honey rate metric. Prints once per PPO iteration
+        # (~every N_STEPS steps ≈ 15 min). Coarser than per-status-line so
+        # short OCR bounces don't create noise, aligned with SB3 iteration
+        # boundaries for easier comparison across iterations.
+        #
+        # LIMITATION: honey-only. When Fredrick starts doing non-honey
+        # activities (quests, gear buying, planter mgmt, boss fights),
+        # this rate drops even if the bot is being productive. Look at
+        # ep_rew_mean alongside — if reward is healthy but rate is low,
+        # bot is doing something non-honey the reward function likes.
+        if (honey is not None and self._step_count > 0
+                and self._step_count % 4096 == 0
+                and self._step_count != self._last_rate_report_step):
+            self._last_rate_report_step = self._step_count
+            # Use reward's cleaned honey_history — no raw OCR spikes.
+            if self._reward.honey_history:
                 now_ts = time.time()
-                window_start = now_ts - 900  # 15 min
+                window_start = now_ts - (4096 / 5.0)   # ~14 min at 5fps
                 oldest_ts, oldest_honey = None, None
                 for ts, h in self._reward.honey_history:
                     if ts >= window_start:
@@ -567,11 +584,12 @@ class BSSEnv(gym.Env):
                         break
                 if oldest_ts is not None:
                     window_secs = now_ts - oldest_ts
-                    if window_secs > 30:  # need meaningful window
-                        rate = (honey - oldest_honey) / (window_secs / 3600)
-                        rate_str = f"  ({rate:+,.0f}/hr)"
-            print(f"[env t={self._step_count:6d} {live_fps:.1f}fps] pollen={pollen_str}  honey={honey_str}{gained}{rate_str}  "
-                  f"total_reward={self._reward.total_reward_this_episode:.2f}")
+                    if window_secs > 60:  # need a real window
+                        gain = honey - oldest_honey
+                        rate = gain / (window_secs / 3600)
+                        iteration = self._step_count // 4096
+                        print(f"[rate] iter ~{iteration}: {gain:+,.0f} honey over ~{window_secs/60:.0f} min = {rate:+,.0f}/hr "
+                              f"(honey-only; drops when bot does non-honey activity)")
 
         # We do NOT terminate on ESC here — that would just start a new
         # episode. Stopping training is handled by StopOnKeyCallback in

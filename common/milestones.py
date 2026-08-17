@@ -68,14 +68,32 @@ class MilestoneTracker:
     # Persistence-based confirmation for honey milestones. A single honey
     # reading crossing a threshold is NOT enough to fire — must be sustained
     # across N consecutive reads. This defeats OCR decimal-shift misreads
-    # (10x/100x/1000x jumps caused by comma/period parsing errors) that
-    # would otherwise falsely fire every threshold at once. Reward function
-    # has similar protection for reward calc; milestone tracker needs its
-    # own because a false fire here is unrecoverable (threshold marked
-    # done forever). Number tuned conservatively — real honey growth is
-    # slow enough that requiring N=5 consecutive confirmations doesn't
-    # delay real milestones meaningfully, but blocks every OCR bounce.
-    HONEY_CONFIRMATION_READS = 5
+    # (10x/100x/1000x jumps from comma/period parsing errors) that would
+    # otherwise falsely fire every threshold at once.
+    #
+    # Bumped from 5 to 30 on 2026-08-17 after seeing 100M-10B thresholds
+    # all falsely fire when OCR misreads persisted for 5+ consecutive
+    # reads. 30 requires ~60s of continuous same-direction misreads to
+    # confirm, which is essentially never seen. Real honey growth is
+    # far slower than milestone spacing (~10x jumps), so waiting 60s to
+    # confirm doesn't delay any real crossing meaningfully.
+    HONEY_CONFIRMATION_READS = 30
+
+    # Ratio-based decimal-shift rejection (same patterns as reward.py).
+    # If a new reading is 10x/100x/1000x of the last-seen valid reading,
+    # it's almost certainly an OCR error — reject WITHOUT counting toward
+    # any threshold's confirmation counter. Layered defense: confirmation
+    # blocks brief spikes; ratio-check blocks decimal-shifts even if they
+    # persist.
+    DECIMAL_SHIFT_RATIOS = [
+        (0.00008, 0.00012),   # 10000x truncation
+        (0.0008, 0.0012),     # 1000x truncation
+        (0.008, 0.012),       # 100x truncation
+        (0.08, 0.12),          # 10x truncation
+        (8.0, 12.0),           # 10x expansion
+        (80.0, 120.0),         # 100x expansion
+        (800.0, 1200.0),       # 1000x expansion
+    ]
 
     def __init__(self):
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +104,9 @@ class MilestoneTracker:
         # Keyed by threshold value: {5_000_000: 3, 10_000_000: 1, ...}.
         # Any read that falls below a threshold resets its counter to 0.
         self._honey_confirmations = {}
+        # Last-seen honey reading, for decimal-shift ratio comparison.
+        # None until first non-rejected reading arrives.
+        self._last_seen_honey = None
         if STATE_PATH.exists():
             try:
                 data = json.loads(STATE_PATH.read_text())
@@ -118,14 +139,24 @@ class MilestoneTracker:
     def check_honey(self, step, honey):
         """Called each HUD read. No-ops if honey is None (OCR failed).
 
-        Requires HONEY_CONFIRMATION_READS consecutive readings above a
-        threshold before firing that threshold's milestone. Single-frame
-        OCR misreads (decimal-shift 10x/100x/1000x jumps) get filtered
-        because the reading returns to the true value on the next frame,
-        resetting the confirmation counter.
+        Two layers of outlier defense against OCR decimal-shift misreads:
+        1. Ratio check — if new reading is 10x/100x/1000x of last-seen,
+           reject without touching any counter.
+        2. Confirmation — requires HONEY_CONFIRMATION_READS consecutive
+           readings above a threshold before firing.
         """
         if honey is None:
             return
+        # Layer 1: decimal-shift ratio rejection. Only kicks in after we
+        # have a baseline reading to compare against.
+        if self._last_seen_honey is not None and self._last_seen_honey > 0:
+            ratio = honey / self._last_seen_honey
+            if any(low <= ratio <= high for low, high in self.DECIMAL_SHIFT_RATIOS):
+                # Almost certainly an OCR decimal-shift error. Reject
+                # without updating last_seen_honey OR touching any counter.
+                return
+        self._last_seen_honey = honey
+        # Layer 2: threshold confirmation counter.
         for threshold in HONEY_THRESHOLDS:
             key = f"honey_{threshold}"
             if key in self._fired:
@@ -143,7 +174,6 @@ class MilestoneTracker:
                     )
             else:
                 # Reading dropped below this threshold — reset its counter.
-                # Blocks a decimal-shift misread from counting toward confirmation.
                 self._honey_confirmations.pop(threshold, None)
 
     def check_step(self, step):
