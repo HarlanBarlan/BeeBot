@@ -62,7 +62,7 @@ Beyond 35 bees there are no more physical bee-count gates — just soft mileston
 | **Mondo Chick** | Mountain Top Field | Public — HP 300k but auto-decays 333 HP/sec, trivial after 15 min. Any damage = loot share. Hourly UTC spawn. | *pending* |
 | **Werewolf** | Spider Field cave, **night only** | Mid — HP 250, 35 dmg/hit, 1h respawn. Drops Diamond Egg (~0.5%) / Star Jelly | *pending* |
 | **Coconut Crab** | Coconut Field | Mid-late — HP 250k, 36h respawn, 2h fight timer (HP resets if you leave). Guaranteed Coconuts + Micro-Converters | *pending* |
-| **Tunnel Bear** | Tunnel behind Panda Bear's quests | Late — HP ~10k, ~1000 dmg per boulder (one-shots low-defense). ~48h respawn | *pending* |
+| **Tunnel Bear** | Tunnel behind Panda Bear's quests | Late — HP 10,000 (user-confirmed). Damage mechanism NOT boulders (fabricated in prior guide). Exact attack style uncertain. ~48h respawn | *pending* |
 | **Stump Snail** | Strawberry Field | Very late — HP 30M, 96h respawn, **HP persists across sessions** (chip-farmable). Drops Glue + Shell Amulet | *pending* |
 
 Also worth logging separately when they happen:
