@@ -99,6 +99,37 @@ class CnnFreezeCallback(BaseCallback):
         return True
 
 
+class MetricsHistoryCallback(BaseCallback):
+    """Records SB3 training metrics at each rollout end so the session
+    summary can show trajectory (first / best / worst / last) instead of
+    just the final iteration's snapshot.
+
+    SB3 logs each iteration to `logger.name_to_value` before the next
+    rollout starts. We capture the values right after PPO's train step
+    completes (on_rollout_end fires after `.train()`).
+
+    History entries: {iter, ep_rew_mean, explained_variance, value_loss}.
+    Kept in memory only — SB3's TensorBoard logs are the durable record.
+    """
+    def __init__(self, verbose=0):
+        super().__init__(verbose)
+        self.history = []
+
+    def _on_step(self):
+        return True
+
+    def _on_rollout_end(self):
+        # Pull the latest logged values (SB3 populates them before train()
+        # is called, and train() runs before _on_rollout_end fires).
+        d = self.model.logger.name_to_value
+        self.history.append({
+            "iter": len(self.history) + 1,
+            "ep_rew_mean": d.get("rollout/ep_rew_mean"),
+            "explained_variance": d.get("train/explained_variance"),
+            "value_loss": d.get("train/value_loss"),
+        })
+
+
 MODELS_DIR = Path("models")
 LOGS_DIR = Path("logs/tensorboard")
 TOTAL_TIMESTEPS = 100_000       # ~2.5 hours at 10 FPS
@@ -231,10 +262,11 @@ def main():
     )
     stop_cb = StopOnKeyCallback(key="esc")
     freeze_cb = CnnFreezeCallback(unfreeze_at=CNN_FREEZE_STEPS)
+    metrics_cb = MetricsHistoryCallback()
 
     try:
         model.learn(total_timesteps=TOTAL_TIMESTEPS,
-                    callback=[checkpoint_cb, stop_cb, freeze_cb])
+                    callback=[checkpoint_cb, stop_cb, freeze_cb, metrics_cb])
     except KeyboardInterrupt:
         print("[rl] KeyboardInterrupt — saving and stopping")
     finally:
@@ -243,7 +275,7 @@ def main():
         # its counters are still valid. Wrap in try so a summary error
         # doesn't prevent the checkpoint save from being reported.
         try:
-            bss_env.print_session_summary()
+            bss_env.print_session_summary(metrics_history=metrics_cb.history)
         except Exception as e:
             print(f"[summary] failed to print session summary: {e}")
         env.close()

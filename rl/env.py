@@ -624,13 +624,13 @@ class BSSEnv(gym.Env):
             except Exception:
                 pass
 
-    def print_session_summary(self):
+    def print_session_summary(self, metrics_history=None):
         """Print a human-readable end-of-session summary table.
 
         Called from train_ppo.py after the training loop stops (ESC or
-        exception). Everything shown is from env-side counters + reward
-        function state — no dependency on SB3 model. SB3's own rollout
-        table already prints separately on iteration boundaries.
+        exception). Env-side counters + reward function state + optional
+        SB3 metrics history (from MetricsHistoryCallback) for a trajectory
+        view instead of a last-iteration snapshot.
         """
         now_ts = time.time()
         duration_s = now_ts - self._session_start_ts
@@ -685,6 +685,34 @@ class BSSEnv(gym.Env):
                 print(f"    - {m.get('note', '(unknown)')}")
         else:
             print(f"  Milestones this session: none")
+
+        # Learning-metric trajectory (if callback recorded any iterations).
+        # Shows first / best / last so the reader can see whether training
+        # actually progressed vs just stayed noisy at whatever level it
+        # started at.
+        if metrics_history:
+            print(f"  Learning trajectory across {len(metrics_history)} iterations:")
+            # ep_rew_mean — SB3's rolling 100-episode mean; useful for
+            # trend but each value spans multiple iterations.
+            rews = [e["ep_rew_mean"] for e in metrics_history if e.get("ep_rew_mean") is not None]
+            if rews:
+                print(f"    ep_rew_mean:   first={rews[0]:+.3f}  "
+                      f"best={max(rews):+.3f}  worst={min(rews):+.3f}  "
+                      f"last={rews[-1]:+.3f}  "
+                      f"(delta {rews[-1]-rews[0]:+.3f})")
+            # explained_variance — per-iteration value function fit quality.
+            # Best / last shows whether the value function converged.
+            evs = [e["explained_variance"] for e in metrics_history if e.get("explained_variance") is not None]
+            if evs:
+                print(f"    explained_var: first={evs[0]:+.3f}  "
+                      f"best={max(evs):+.3f}  worst={min(evs):+.3f}  "
+                      f"last={evs[-1]:+.3f}")
+            # value_loss — spikes here indicate reward outliers.
+            vls = [e["value_loss"] for e in metrics_history if e.get("value_loss") is not None]
+            if vls:
+                print(f"    value_loss:    first={vls[0]:.4f}  "
+                      f"best={min(vls):.4f}  worst={max(vls):.4f}  "
+                      f"last={vls[-1]:.4f}")
         print(line)
         print()
 
