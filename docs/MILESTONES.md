@@ -190,12 +190,26 @@ Baseline hive already includes at least one Rare, Epic, and Legendary bee (from 
 
 ## Leaderboard mentions
 
-All BSS leaderboards are global. Any mention for Fredrick is a genuine global-scale milestone.
+All BSS leaderboards are global (not per-server) and only display the top 100. Any leaderboard entry Fredrick earns IS a top-100 global finish by definition — meaningful milestones.
 
-- **First leaderboard mention ever (any board, any position):** *pending*
-- **First top-1000 finish:** *pending*
-- **First top-100 finish:** *pending*
-- **First top-10 finish:** *pending*
+Track per-board because different boards test different bot capabilities. Log first-ever appearance on each; log top-10 finishes separately.
+
+### First appearance on each board
+- **All-Time Top Honeymakers:** *pending* (tests career honey accumulation)
+- **Monthly Top Honeymakers:** *pending* (tests recent farming rate — resets 1st of month)
+- **Daily Top Honeymakers:** *pending* (tests peak session output — resets 12:00 AM CST)
+- **Daily Top Honey Gift Receivers:** *pending* (would require another player gifting Fredrick — unlikely for a bot but not impossible)
+- **All-Time Top Battlers:** *pending* (Battle Points from mob kills)
+- **Ant Challenge Monthly Rank:** *pending* (top Ant Challenge score, resets monthly)
+- **Top Brown Bear Helpers:** *pending* (Brown Bear quests completed)
+- **Top Riley Bee Helpers:** *pending* (Riley infinite quests completed)
+- **Top Bucko Bee Helpers:** *pending* (Bucko infinite quests completed)
+- **Top Stick Bug Fighters:** *pending* (Stick Bug Challenge scores)
+
+### Top-10 finishes (rare, exceptional)
+Log any time Fredrick reaches top-10 on any specific board. Each one is a distinct milestone.
+
+- *pending*
 
 ---
 
