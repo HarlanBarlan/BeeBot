@@ -4,6 +4,26 @@ Chronological log of significant events in Fredrick's training. Complements [EXP
 
 For BSS mechanics context (what a boss is, where things are, how amulets work), see the reference memories — do not restate that stuff here.
 
+**Only bot-autonomous achievements count as milestones.** Anything the user did manually during imitation recording (buying gear, hatching bees) is baseline state, not a Fredrick milestone. Baseline listed below for reference; milestones start from there.
+
+---
+
+## Starting baseline (pre-Phase-3, from imitation recording era)
+
+State Fredrick was in when PPO training began (~2026-08-15). None of this counts as a bot achievement — it's the setup the RL is starting from.
+
+- **Bees:** ~15 (already through Honey Bee Gate)
+- **Backpack:** Port-O-Hive (~250k capacity) + belt if equipped
+- **Tools:** starting toolkit — Scooper baseline + any Pro Shop tools purchased manually
+- **Masks/boots/gliders:** Glider (10-bee gate area) already equipped
+- **Bees in hive:** includes at least one Rare, one Epic, one Legendary bee (hatched during imitation recording sessions)
+- **Amulets:** none / verify
+- **Beequips:** none / verify
+- **Honey balance:** ~4.4M-5.2M range at PPO_36 fresh-start
+- **Quest turn-ins ever:** 0
+
+If Fredrick ever regresses below this (e.g., sells a Legendary bee), that's a data point worth logging.
+
 ---
 
 ## How to use this doc
@@ -84,16 +104,15 @@ Also worth logging when notable:
 - **First endgame trio tool** (Dark Scythe / Tide Popper / Gummyballer): *pending*
 
 ### Backpacks + belts
-Log each upgrade with new total capacity.
+Baseline: Port-O-Hive (user-equipped during imitation recording). Milestones are AUTONOMOUS upgrades by Fredrick during RL training.
 
-- Pouch through Compressor: pre-tracking (Fredrick's earlier progression)
-- **Port-O-Hive equipped:** ✅ (already achieved per user check 2026-08-16)
-- **Red Port-O-Hive:** *pending*
-- **Blue Port-O-Hive:** *pending*
-- **Porcelain Port-O-Hive:** *pending*
-- **Coconut Canister (+1M):** *pending*
-- **First belt (any):** *pending / verify*
-- **Mondo Belt Bag or better:** *pending*
+- **First autonomous backpack upgrade (beyond baseline):** *pending*
+- Red Port-O-Hive by bot: *pending*
+- Blue Port-O-Hive by bot: *pending*
+- Porcelain Port-O-Hive by bot: *pending*
+- Coconut Canister (+1M) by bot: *pending*
+- First belt purchased by bot: *pending*
+- Mondo Belt Bag or better by bot: *pending*
 
 ### Amulets
 - **First amulet ever (any type):** *pending*
@@ -114,20 +133,24 @@ Log each upgrade with new total capacity.
 - **Beequip case expansions (5 → 15 max via Dapper quests):** log each
 
 ### Masks / boots / gliders
-- **First Glider (10-bee gate area):** ✅ (already achieved per user check 2026-08-16)
-- **First mask beyond Basic:** *pending*
-- **First boots upgrade:** *pending*
-- **Endgame mask (Demon / Diamond / Gummy):** *pending*
+Baseline: Glider (10-bee gate area) already equipped. Milestones = autonomous upgrades by Fredrick.
+
+- **First autonomous glider upgrade:** *pending*
+- First mask beyond Basic by bot: *pending*
+- First boots upgrade by bot: *pending*
+- Endgame mask (Demon / Diamond / Gummy) by bot: *pending*
 
 ---
 
 ## Bee milestones
 
 ### Bee count
+Baseline: ~15 (user-set during imitation era). Milestones = counts Fredrick reaches AUTONOMOUSLY.
+
 | Count | Reached |
 |---|---|
-| 15 (start) | 2026-08-14 approx |
-| 16 | *pending* |
+| 15 (baseline) | pre-Phase-3, from imitation recording era |
+| 16 (first autonomous +1) | *pending* — first hive-slot fill Fredrick earns on his own |
 | 20 | *pending* — unlocks Ant Gate |
 | 25 | *pending* — unlocks Lion Bee Gate |
 | 30 | *pending* |
@@ -137,10 +160,12 @@ Log each upgrade with new total capacity.
 | 50 (max) | *pending* |
 
 ### Bee rarity firsts
-- **First Rare bee:** ✅ (during imitation recording, pre-tracking)
-- **First Epic bee:** ✅ (during imitation recording, pre-tracking)
-- **First Legendary bee:** ✅ (during imitation recording, pre-tracking)
-- **First Mythic bee:** *pending*
+Baseline hive already includes at least one Rare, Epic, and Legendary bee (from imitation recording era, user-hatched). Milestones = bees Fredrick hatches AUTONOMOUSLY during RL training.
+
+- **First autonomous Rare bee hatch by bot:** *pending*
+- First autonomous Epic bee hatch by bot: *pending*
+- First autonomous Legendary bee hatch by bot: *pending*
+- **First Mythic bee (any source):** *pending* — extremely rare, worth tracking regardless of who does it
 
 ### Gifted bee milestones
 - **First Gifted bee (any rarity):** *pending / verify*
@@ -180,8 +205,8 @@ Fired by [MilestoneTracker](../common/milestones.py); events in `logs/milestones
 
 | Threshold | Reached |
 |---|---|
-| 5,000,000 | pre-tracking |
-| 10,000,000 | *pending* |
+| 5,000,000 | Fredrick started at ~4.4M-5.2M baseline (partial credit — bot crossed 5M during PPO_36 fresh run 2026-08-16, but very close to starting balance) |
+| 10,000,000 | *pending* (first meaningful autonomous milestone — Fredrick would need to earn ~5M in-training) |
 | 25,000,000 | *pending* |
 | 50,000,000 | *pending* |
 | 100,000,000 | *pending* |
