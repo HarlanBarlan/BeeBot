@@ -34,6 +34,64 @@ If Fredrick ever regresses below this (e.g., sells a Legendary bee), that's a da
 
 ---
 
+## How to check in (2-min routine)
+
+Do this order every time. Aim to finish in 2 minutes.
+
+**Step 1 — Watch training terminal for 30 sec (tail the log).**
+Look for:
+- `[milestone] ...` — auto-fires when honey/step thresholds cross. Copy the exact line into the appropriate section of this doc.
+- `[popup] dismissed ...` — normal, ignore unless it's a NEW popup type you haven't templated
+- `[env t=... dialogue-rescue: no template matched ... Consecutive failures: N]` — if N climbs past ~10, bot is stuck. Screenshot the Roblox screen and note as a concern.
+- Missing `[timing]` lines for extended stretches — capture is stalling; note as concern.
+- `[reward] accepting large POS/NEG delta ... re-baselining` — usually fine. More than 2-3 per hour = re-snip `honey_display.png`.
+
+**Step 2 — Look at Roblox window for 30 sec (no menus).**
+- **Honey count** (top of screen) — write down the number for the check-in entry.
+- **Pollen bar** — non-zero and moving?
+- **Where is the bot?** Which field, or is it in a menu/UI/stuck spot?
+- **Active buffs** (top-left strip) — anything interesting like Haste x10 stacks?
+- **Any UI blocking gameplay?** If yes and the popup handler isn't dismissing it, snip a new popup template pair.
+
+**Step 3 — Open the Hive menu for 30 sec.**
+Just look, don't change anything (leaving it open blocks bot control — close when done).
+- **Bee count** — total, and delta from baseline (~15).
+- **Rarity of new slots** — any new Rare/Epic/Legendary/Mythic since last check?
+- **Any Gifted bees** (star indicator)?
+- Close the menu.
+
+**Step 4 — Fill in check-in template (30 sec).**
+Copy the template block below into the "Check-ins" section at the bottom of this doc. Fill in what changed since last time.
+
+If nothing changed ("no progress since last check"), still log it — the ABSENCE of progression is data.
+
+### When to spend more time (not routine)
+
+Stop and investigate if you see:
+- **Honey dropped** with no purchase reason (bot bought something surprising OR OCR misread)
+- **Bee count dropped** (bot sold a bee?)
+- **New popup type** the handler doesn't dismiss — snip template pair now
+- **Bot stuck in same UI 5+ min** — F8 pause, walk out, unpause
+- **Fresh gear equipped** you didn't see last check — write it down explicitly (this IS an autonomous milestone)
+- **Any leaderboard mention** — huge, log to appropriate leaderboard row
+
+### Weekly deeper check (10 min, once per week)
+
+- Navigate to Ticket Tent → current ticket count
+- Open quests menu → any progress or turn-ins?
+- Check Star Hall (past Lion Bee Gate) → gifted-type count
+- Wealth Clock used recently?
+- Glance at TensorBoard once — training curve shape
+
+### What to skip
+
+- Watching micro-behavior (field switches, tool swings, quest tab opens — meaningless statistically)
+- Checking every individual bee's bond level
+- Reading full quest text (bot can't understand it pre-Phase-5)
+- Trying to verify specific ability token pickups
+
+---
+
 ## Check-in template
 
 Copy this block each time. Add newest at the top of the check-in section (bottom of this doc).
