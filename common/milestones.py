@@ -65,10 +65,27 @@ STEP_THRESHOLDS = [
 class MilestoneTracker:
     """Auto-detect and log training milestones. Cheap to call every step."""
 
+    # Persistence-based confirmation for honey milestones. A single honey
+    # reading crossing a threshold is NOT enough to fire — must be sustained
+    # across N consecutive reads. This defeats OCR decimal-shift misreads
+    # (10x/100x/1000x jumps caused by comma/period parsing errors) that
+    # would otherwise falsely fire every threshold at once. Reward function
+    # has similar protection for reward calc; milestone tracker needs its
+    # own because a false fire here is unrecoverable (threshold marked
+    # done forever). Number tuned conservatively — real honey growth is
+    # slow enough that requiring N=5 consecutive confirmations doesn't
+    # delay real milestones meaningfully, but blocks every OCR bounce.
+    HONEY_CONFIRMATION_READS = 5
+
     def __init__(self):
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         JSONL_PATH.parent.mkdir(parents=True, exist_ok=True)
         self._fired = set()
+        # For each pending honey threshold, track how many consecutive
+        # reads have exceeded it. Fires only after N consecutive confirmations.
+        # Keyed by threshold value: {5_000_000: 3, 10_000_000: 1, ...}.
+        # Any read that falls below a threshold resets its counter to 0.
+        self._honey_confirmations = {}
         if STATE_PATH.exists():
             try:
                 data = json.loads(STATE_PATH.read_text())
@@ -99,7 +116,14 @@ class MilestoneTracker:
         print(f"[milestone] {note}")
 
     def check_honey(self, step, honey):
-        """Called each HUD read. No-ops if honey is None (OCR failed)."""
+        """Called each HUD read. No-ops if honey is None (OCR failed).
+
+        Requires HONEY_CONFIRMATION_READS consecutive readings above a
+        threshold before firing that threshold's milestone. Single-frame
+        OCR misreads (decimal-shift 10x/100x/1000x jumps) get filtered
+        because the reading returns to the true value on the next frame,
+        resetting the confirmation counter.
+        """
         if honey is None:
             return
         for threshold in HONEY_THRESHOLDS:
@@ -107,13 +131,20 @@ class MilestoneTracker:
             if key in self._fired:
                 continue
             if honey >= threshold:
-                self._fired.add(key)
-                self._persist()
-                self._record(
-                    "honey_threshold",
-                    f"honey crossed {threshold:,} at step {step:,}",
-                    {"step": step, "threshold": threshold, "honey": int(honey)},
-                )
+                self._honey_confirmations[threshold] = self._honey_confirmations.get(threshold, 0) + 1
+                if self._honey_confirmations[threshold] >= self.HONEY_CONFIRMATION_READS:
+                    self._fired.add(key)
+                    self._honey_confirmations.pop(threshold, None)
+                    self._persist()
+                    self._record(
+                        "honey_threshold",
+                        f"honey crossed {threshold:,} at step {step:,}",
+                        {"step": step, "threshold": threshold, "honey": int(honey)},
+                    )
+            else:
+                # Reading dropped below this threshold — reset its counter.
+                # Blocks a decimal-shift misread from counting toward confirmation.
+                self._honey_confirmations.pop(threshold, None)
 
     def check_step(self, step):
         """Called periodically (e.g. once per rollout, not per step)."""

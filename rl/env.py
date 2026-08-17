@@ -552,7 +552,25 @@ class BSSEnv(gym.Env):
             if honey is not None and self._session_start_honey is not None:
                 delta = honey - self._session_start_honey
                 gained = f"  (+{delta:,.0f} this session)"
-            print(f"[env t={self._step_count:6d} {live_fps:.1f}fps] pollen={pollen_str}  honey={honey_str}{gained}  "
+            # Rolling honey/hr rate over last 15 min. Uses the reward
+            # function's honey_history because it's already decimal-shift
+            # filtered — env's own history contains raw OCR reads including
+            # 10x/100x/1000x misreads that would swing the rate wildly.
+            rate_str = ""
+            if honey is not None and self._reward.honey_history:
+                now_ts = time.time()
+                window_start = now_ts - 900  # 15 min
+                oldest_ts, oldest_honey = None, None
+                for ts, h in self._reward.honey_history:
+                    if ts >= window_start:
+                        oldest_ts, oldest_honey = ts, h
+                        break
+                if oldest_ts is not None:
+                    window_secs = now_ts - oldest_ts
+                    if window_secs > 30:  # need meaningful window
+                        rate = (honey - oldest_honey) / (window_secs / 3600)
+                        rate_str = f"  ({rate:+,.0f}/hr)"
+            print(f"[env t={self._step_count:6d} {live_fps:.1f}fps] pollen={pollen_str}  honey={honey_str}{gained}{rate_str}  "
                   f"total_reward={self._reward.total_reward_this_episode:.2f}")
 
         # We do NOT terminate on ESC here — that would just start a new
