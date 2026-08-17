@@ -132,7 +132,11 @@ class MetricsHistoryCallback(BaseCallback):
 
 MODELS_DIR = Path("models")
 LOGS_DIR = Path("logs/tensorboard")
-TOTAL_TIMESTEPS = 100_000       # ~2.5 hours at 10 FPS
+TOTAL_TIMESTEPS = 50_000_000    # Effectively unlimited — user stops training
+                                # manually with ESC. At ~5fps actual (not the
+                                # 10fps this file used to assume) that's ~115
+                                # days of continuous training. Raise again if
+                                # we ever get close.
 SAVE_EVERY_N_STEPS = 5000
 LEARNING_RATE = 3e-4
 # Bigger batch: GPU is at 15% because it's underused. 256 gets better GPU

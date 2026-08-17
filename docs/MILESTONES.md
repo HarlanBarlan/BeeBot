@@ -342,20 +342,8 @@ First-time occurrences of specific in-game behaviors worth calling out for the p
 
 **Why this matters:** first observed instance of the "post-full-bag exploration attractor" — a classic challenge for pure-RL bots when the demonstrating human never showed the required behavior (hive convert). Whether Fredrick learns to stand still at the pad through pure PPO + entropy exploration, and how long it takes, will be a core case study in the paper.
 
-### 2026-08-17 — First successful autonomous hive convert(s)
-✅ PPO_41, iteration ~8, step ~30,600. Pollen dropped from 100% (sustained since step 21,900) to 0%, honey ticked from ~7,641,000 to ~8,081,000 (+440k). First evidence Fredrick learned the full "stand still on hive pad through the conversion animation" sequence.
-
-**Six clean convert transitions observed this session** (pollen ≥15% → 0-2%, honey delta positive):
-- step ~30,600: +440k, first convert
-- step ~49,800: +small
-- step ~64,500: total_reward=15.71 (large PBRS payoff at the moment of convert completion)
-- step ~67,800: total_reward=8.46
-- step ~88,200: convert
-- step ~95,100: total_reward=18.77 (biggest single-step reward of the session — full-bag convert)
-
-**Session outcome:** honey 7,477,952 → ~8,596,396 = **+1,118,444 earned autonomously in 6 hours** (~186k/hr average). Best session output to date. `ep_rew_mean` climbed from -0.02 (iter 7) to +1.07 (iter 25) — the reward signal successfully guided the policy toward the correct action sequence from cold. Approximate learning-to-first-successful-convert time: ~7,000 steps (~25 min) of exposure to sustained-full-bag stagnation.
-
-**Why this matters for the paper:** the imitation dataset contained ZERO hive-convert demonstrations (user always used the Instant Converter). This is a case study of pure PPO + PBRS discovering a novel multi-step action sequence (approach pad + stand still for ~5 sec + hold no keys) from reward signal alone, in a live commercial game. The "post-full-bag exploration attractor" that looked like a serious challenge yesterday resolved in one session.
+### First successful autonomous hive convert (start-to-honey-credit)
+*pending* — user must directly observe the bot completing a hive convert to log this. 100%→0% pollen transitions in training logs are AMBIGUOUS: identical signatures come from both hive convert AND Instant Converter usage. This session (PPO_41, 2026-08-17) showed 6 such transitions and honey went 7.48M → 8.60M (+1.12M), but Fredrick had accumulated some tickets during the session, so any/all of those transitions may have been IC-based. Do not backfill from log evidence alone.
 
 ---
 
@@ -416,7 +404,7 @@ Subpackages, machine-local templates, laptop dropped. Extended training on deskt
 - **New bees since last check:** none
 - **Bosses defeated since last check:** none
 - **Leaderboard mentions:** none
-- **Notable behavior:** BIG — Fredrick learned to hive convert. Six clean convert transitions observed (full-bag → 0% pollen with honey delta positive). First one at step ~30,600, ~25 min after full-bag stagnation began. Rate improved dramatically as convert behavior stabilized. `ep_rew_mean` climbed from -0.02 (iter 7) → +1.07 (iter 25).
+- **Notable behavior:** Session gain of +1.12M honey with 6 pollen-100→0 transitions in the logs. Origin AMBIGUOUS — Fredrick had accumulated tickets during the session, so the transitions could be Instant Converter uses rather than hive convert. User was not present to directly observe. Do not claim hive-convert learning until directly observed. `ep_rew_mean` climbed from -0.02 (iter 7) → +1.07 (iter 25) regardless — the reward pressure was real, whichever action closed the loop.
 - **Concerns:** milestone tracker false-fired 10M/25M/50M at step 91,559 (true honey ~8.5M) — OCR misreads slipped past the ratio filter. Fixed via median-of-60 buffer + sequential threshold gate. Rate metric was also fooled by misread endpoints; fixed via median smoothing.
 
 ### Check-in 2026-08-17 (~7 iters into PPO_41, step ~28,500)
