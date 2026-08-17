@@ -327,6 +327,24 @@ Auto-detected. All *pending*.
 
 ---
 
+## Behavioral firsts
+
+First-time occurrences of specific in-game behaviors worth calling out for the paper's learning-curve narrative. Different from honey/step thresholds — these are qualitative discovery events.
+
+### 2026-08-17 — First bag fill to 100%
+✅ PPO_41, iteration 6, ~step 21,900 of session (~step 28,500 total across resumed training). Pollen bar reached 100% during Sunflower/Dandelion farming after the starter Instant Converter became unusable (ticket depletion). Bot has never learned hive-convert during imitation (user used IC for conversions), so this is the first time full-bag stagnation is a live problem for the policy.
+
+**Post-100% behavior (observed manually):** bot continues attempting to harvest in fields (its highest-probability action), occasionally drifts near hive pad and initiates conversion, but leaves the pad before conversion completes — jumps around and cancels the animation. Net honey gain during full-bag period ≈ 0.
+
+**Reward-signal check (paper-relevant):** iteration-level `ep_rew_mean` trajectory shows the negative signal accumulating as expected — iter 4: +1.03, iter 5: +0.777, iter 6: +0.363, iter 7: -0.02. Full bag → PBRS bag-fill potential capped → per-tick reward drops toward zero → stagnation penalty accrues. This is the reward function working as designed; whether the policy can learn a new sequence from this signal alone is the actual open question.
+
+**Why this matters:** first observed instance of the "post-full-bag exploration attractor" — a classic challenge for pure-RL bots when the demonstrating human never showed the required behavior (hive convert). Whether Fredrick learns to stand still at the pad through pure PPO + entropy exploration, and how long it takes, will be a core case study in the paper.
+
+### First successful autonomous hive convert (start-to-honey-credit)
+*pending* — the "did he actually learn it" moment for the above.
+
+---
+
 ## Regression events (paper case studies)
 
 ### 2026-08-15 — 3-hour age-dialog trap
@@ -376,3 +394,13 @@ Subpackages, machine-local templates, laptop dropped. Extended training on deskt
 ## Check-ins
 
 *Add newest at top. Use the template above.*
+
+### Check-in 2026-08-17 (~7 iters into PPO_41, step ~28,500)
+- **Bee count:** 15 (unchanged)
+- **Honey:** ~7.64M (was 7.47M start of session — +170k earned in session)
+- **Best gear equipped:** Honey Dipper / Port-O-Hive / no mask / no amulets (unchanged)
+- **New bees since last check:** none
+- **Bosses defeated since last check:** none
+- **Leaderboard mentions:** none
+- **Notable behavior:** Reached 100% pollen for the first time (~step 21,900). Tickets depleted so starter IC is no longer an option. Bot attempts hive convert when it drifts near the pad but leaves before conversion completes — walks off pad, cancels animation. Rest of the time continues to try to harvest in fields with a full bag.
+- **Concerns:** hive-convert never demonstrated during imitation, so bot has no prior for "stand still on pad for N seconds." Reward signal IS pushing back (`ep_rew_mean` +1.03 → -0.02 over 4 iters), which is what we want. Question is whether entropy exploration + reward gradient is enough to discover the correct action sequence from scratch, or whether this becomes a persistent attractor.
