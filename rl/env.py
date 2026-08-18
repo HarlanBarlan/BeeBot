@@ -389,6 +389,18 @@ class BSSEnv(gym.Env):
         # to avoid disk fill during multi-hour lockups.
         self._unknown_dialogue_saves = 0
         self._unknown_dialogue_saved_at = set()   # failure counts already saved this stall
+        # Separate counter for template MATCHES that don't help — the (865, 636)
+        # failure mode we hit 2026-08-18. Template scored 0.98 confidence
+        # hundreds of times in a row, rescue clicked, but HUD never changed
+        # (bot stayed pollen=41%/honey=10.22M for hours). The _consecutive_
+        # failed_rescues counter above only tracks template MISMATCHES, so
+        # this class of stuck-loop never triggered a stuck-frame dump.
+        # Track HUD at time of last rescue click; if it hasn't moved by the
+        # next successful match, that click was useless — increment the
+        # "useless match" counter and dump frames at log-spaced counts.
+        self._consecutive_useless_matches = 0
+        self._hud_at_last_rescue = None   # (honey, pollen_fill) tuple
+        self._useless_match_saved_at = set()
         self._reward_rebaselines = 0           # honey outlier re-baseline events
         self._last_status_print_ts = time.time()
         self._cached_hud = {}          # last successful HUD read, reused between OCR calls
@@ -1241,6 +1253,46 @@ class BSSEnv(gym.Env):
         self._consecutive_failed_rescues = 0
         self._unknown_dialogue_saved_at.clear()   # fresh save slots for next stall
         self._dialogue_rescues_template += 1
+
+        # Useless-match detection: compare HUD state to when the last rescue
+        # fired. If honey and pollen both unchanged, this click accomplished
+        # nothing — the template matched but the game state didn't advance.
+        # Dump the frame at log-spaced counts so the user can see what UI
+        # element is producing the false-positive match.
+        current_hud = (self._last_seen_honey, self._last_seen_pollen)
+        prev_hud = self._hud_at_last_rescue
+        if (prev_hud is not None
+                and prev_hud[0] == current_hud[0]
+                and prev_hud[1] == current_hud[1]):
+            self._consecutive_useless_matches += 1
+            USELESS_SAVE_AT = {5, 15, 40, 100, 250}
+            MAX_SAVES_PER_SESSION = 20   # shared with failed-rescue budget
+            if (self._consecutive_useless_matches in USELESS_SAVE_AT
+                    and self._consecutive_useless_matches not in self._useless_match_saved_at
+                    and self._unknown_dialogue_saves < MAX_SAVES_PER_SESSION):
+                try:
+                    dump_dir = Path("logs/unknown_dialogues")
+                    dump_dir.mkdir(parents=True, exist_ok=True)
+                    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                    fname = (f"useless_match_step{self._step_count}"
+                             f"_hits{self._consecutive_useless_matches}"
+                             f"_at{cx}x{cy}_conf{max_val:.2f}_{ts}.png")
+                    cv2.imwrite(str(dump_dir / fname), frame)
+                    self._unknown_dialogue_saves += 1
+                    self._useless_match_saved_at.add(self._consecutive_useless_matches)
+                    print(f"[env t={self._step_count}] saved USELESS-MATCH frame to "
+                          f"logs/unknown_dialogues/{fname} "
+                          f"(session save {self._unknown_dialogue_saves}/{MAX_SAVES_PER_SESSION}) — "
+                          f"rescue clicked ({cx},{cy}) {self._consecutive_useless_matches}x "
+                          f"in a row without HUD state changing")
+                except Exception as e:
+                    print(f"[env] failed to save useless-match frame: {e}")
+        else:
+            # HUD moved — click was effective (or at least something changed).
+            # Reset both counters.
+            self._consecutive_useless_matches = 0
+            self._useless_match_saved_at.clear()
+        self._hud_at_last_rescue = current_hud
 
         print(f"[env t={self._step_count}] dialogue-rescue: burst {DIALOGUE_RESCUE_CLICK_BURST} "
               f"clicks at ({cx},{cy}) (match conf {max_val:.2f}) — "
