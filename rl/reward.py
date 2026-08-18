@@ -1,17 +1,23 @@
 """
 Reward function for BSS RL agent.
 
-Multi-timescale reward:
-  - Δhoney per tick (fast, dense feedback)
-  - Δhoney per minute (smooths noise)
-  - Δhoney per hour (values sustained farming rates)
-  - Curiosity bonus (visits to novel visual states)
-  - Stall penalty (0-change state = bad)
-  - Item pickup bonuses (from token_values × goal_profiles)
+What actually contributes to reward, per step:
+  - Δhoney per tick / minute / hour (multi-timescale, dense feedback)
+  - PBRS bag-fill potential (invariance-preserving pollen shaping)
+  - Stall penalty (fires only when BOTH honey AND pollen are flat for 3+ min)
+  - -0.01 for None-honey OCR reads (blind-state penalty)
 
-The blended reward is what PPO's advantage function backpropagates.
-Weights determine impulsive vs strategic behavior. Tune during training
-by watching bot behavior and adjusting.
+Notably NOT here (by design, aligned with [[project-beebot-vision]] +
+[[feedback-beebot-pure-rl-vision]]):
+  - No death penalty. Death in BSS drops pollen to 0, which PBRS already
+    handles as a natural -1 potential shift. A hardcoded death penalty
+    would encode "avoid ALL risk," conflicting with the innovation goal.
+  - No curiosity bonus. PPO's built-in entropy bonus (ent_coef=0.005)
+    does the exploration job for now. Curiosity is a planned Phase 5
+    addition when Fredrick needs to discover novel post-training content.
+  - No item pickup bonus. Δhoney is the only value signal; the bot learns
+    what's worth grabbing via the pickup → convert → honey delta chain.
+    Slower to converge than shaped item rewards, but honest to the vision.
 """
 
 import time
@@ -25,12 +31,14 @@ class MultiTimescaleReward:
     W_TICK = 1.0
     W_MINUTE = 0.5
     W_HOUR = 0.1
-    # Stall penalty: moderate. Strong enough to matter over minutes of being
-    # stuck, weak enough that a mildly-productive session (which earns ~+0.01
-    # per tick at scale=1e-4) can still net positive if a stall happened
-    # earlier. Previous -0.2 was 20x good farming rate and dominated everything.
-    W_STALL = -0.03
-    W_DEATH = -100.0  # detect via HUD "you died" or screen fade
+    # Stall penalty: catches truly-stuck states (bot in a shop, wall, dead-end
+    # menu) where NEITHER pollen nor honey moves for 180+ seconds. Reduced from
+    # -0.03 to -0.01 on 2026-08-18 after the 10h PPO_43 session showed it
+    # dominating farming reward: -0.03/step * 5fps = -540/hr while good farming
+    # earns ~+22/hr. Ratio was 24:1 punishment-to-reward, requiring 96% uptime
+    # to net positive. At -0.01/step, ratio drops to 8:1 — still meaningful,
+    # but doesn't push the policy toward excessive risk-aversion.
+    W_STALL = -0.01
 
     # OCR outlier protection: any single-tick honey delta larger than this is
     # treated as a bad reading and IGNORED (both the delta and the "new" honey
@@ -346,19 +354,3 @@ class MultiTimescaleReward:
 
         self.total_reward_this_episode += reward
         return reward
-
-
-class ShapedItemReward:
-    """Adds item-pickup bonuses to the base reward.
-    (Phase 3a+ — plugs into MultiTimescaleReward once we have item detection
-    from token classification in Phase 3c.)"""
-
-    def __init__(self):
-        pass
-
-    def add_pickup(self, item_slug, honey_equivalent):
-        """Called when the world-object detector flags a pickup we grabbed.
-        Adds a shaped bonus proportional to the item's honey-equivalent value."""
-        # TODO Phase 3c: integrate with token_values.json + goal_profiles.json
-        # For now, stubbed.
-        pass
