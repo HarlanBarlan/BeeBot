@@ -278,7 +278,7 @@ Fired by [MilestoneTracker](../common/milestones.py); events in `logs/milestones
 | Threshold | Reached |
 |---|---|
 | 5,000,000 | Fredrick started at ~4.4M-5.2M baseline (partial credit — bot crossed 5M during PPO_36 fresh run 2026-08-16, but very close to starting balance) |
-| 10,000,000 | *pending* (first meaningful autonomous milestone — Fredrick would need to earn ~5M in-training) |
+| 10,000,000 | ✅ 2026-08-18, PPO_43 iter 32, step 129,158 — first cleanly-verified autonomous 10M crossing. Median at fire time 10,003,271 matched actual balance. Session start 9.5M → end 10.08M = +569k autonomous gain over 10h. First milestone to fire with the full defense stack (median-of-60 + jump cap + sequential gate) proving trustworthy. |
 | 25,000,000 | *pending* |
 | 50,000,000 | *pending* |
 | 100,000,000 | *pending* |
@@ -396,6 +396,16 @@ Subpackages, machine-local templates, laptop dropped. Extended training on deskt
 ## Check-ins
 
 *Add newest at top. Use the template above.*
+
+### Check-in 2026-08-18 (end of 10h PPO_43, step ~163,840)
+- **Bee count:** unknown (didn't check hive menu this session)
+- **Honey:** ~10.08M (was 9.5M) → **+569k autonomous** over 10h. **Crossed 10M autonomous threshold** for the first time (real crossing, no OCR poison).
+- **Best gear equipped:** Honey Dipper / Port-O-Hive / no mask / no amulets (unchanged, presumably)
+- **New bees since last check:** unknown
+- **Bosses defeated since last check:** none
+- **Leaderboard mentions:** none
+- **Notable behavior:** Multiple shop-stuck episodes; rescue tier system correctly hit SOFT give-up multiple times and let policy recover. Bot escaped each stuck-state on its own via reward pressure. `ep_rew_mean` stayed at -1.4 throughout (reward pressure genuinely punishing stuck-ness, which is what we want as training signal).
+- **Concerns:** 474 age-dialog popup dismissals (up from 42 last session, 2 the session before). All dismissed successfully but the frequency is unusual — probably server-hop-triggered re-verifications during the night, worth watching. Also `explained_variance` crashed to -2.33 in the final iteration after peaking at +0.924 — value function got noisy from the reward volatility, likely recovers next session.
 
 ### Check-in 2026-08-17 (end of 6h PPO_41, step ~102,400)
 - **Bee count:** 15 (unchanged; hive-menu not opened this check-in)
