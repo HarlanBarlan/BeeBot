@@ -450,6 +450,61 @@ Cold-start template data from wikis provides COVERAGE (many icon types available
 
 ---
 
+### 2026-08-18: reward function vision audit — W_DEATH removed, W_STALL cut 3x, ShapedItemReward stub deleted
+
+**Motivation:** user asked why `W_DEATH = -100.0` existed in reward.py and requested a full audit against the pure-RL vision and long-term sustainability.
+
+**Findings from the audit:**
+
+1. **`W_DEATH = -100.0` was dead code.** Grepped the entire codebase — never referenced. No death detection anywhere reads it. The constant had been sitting there since an early draft.
+
+2. **`ShapedItemReward` class at line 351 was an empty stub** with a `TODO Phase 3c` comment and no callers. Not instantiated, not used.
+
+3. **Docstring lied about features that don't exist** — claimed "Curiosity bonus (visits to novel visual states)" and "Item pickup bonuses (from token_values × goal_profiles)". Neither implemented. Only Δhoney (multi-timescale) + stall penalty + PBRS + None-honey penalty actually exist.
+
+4. **`W_STALL = -0.03` overpowered farming reward by 24x.** Concrete math:
+   - Stall firing: -0.03/step × 5fps = **-540 reward/hr**
+   - Good farming rate (50k honey/hr, all three timescale terms summed): **+22 reward/hr**
+   - Ratio requires 96%+ productive uptime to net positive
+   - Confirmed empirically: PPO_43 (10h) session had ~8% stalled time and averaged ep_rew_mean = -1.4 despite bot gaining +570k honey autonomous
+
+**Decisions:**
+
+1. **Deleted `W_DEATH` entirely.** Death in BSS drops pollen to 0 (bag reset only — honey unchanged, user-confirmed 2026-08-14). PBRS already handles this naturally: when `pollen_current` drops to 0, `F = γ·φ(new) - φ(old) = -1`. So death gets ~-1 reward automatically through the existing shaping. A hardcoded -100 shock would violate the pure-RL principle — it encodes "avoid ALL risk," which conflicts with the innovation goal (bot should try engaging bears, novel fields, boss fights).
+
+2. **Deleted `ShapedItemReward` stub.** Aligned with pure-RL vision: bot learns which items are worth grabbing via the pickup → convert → Δhoney chain. Slower to converge than shaped item rewards, but honest to the design principle. Also removes the temptation for a future contributor to add strategy-encoding pickup rewards ("gift Star Treat to a Blue bee = +5") that would violate the "no reward channel encodes strategy" rule.
+
+3. **Reduced `W_STALL` from -0.03 to -0.01** (3x weaker). New ratio is 8:1 punishment-to-reward per unit time, tolerating up to ~13% stall time before session net goes negative. Preserves the "don't sit forever" signal but stops it from dominating and pushing the policy toward risk-averse behavior.
+
+4. **Rewrote docstring** to describe what actually exists, plus explicit "NOT here and why" callouts referencing `feedback-beebot-pure-rl-vision` — protects against future drift.
+
+**Result:** deferred (next training session will show whether ep_rew_mean climbs into positive territory during productive stretches).
+
+**Learning — publishable design principle:** reward-function code accretes over time. Aspirational features get docstring'd before they're built. Dead constants sit for weeks. Design changes leave orphaned scaffolding. For a research project committing to a strict architectural principle (almost-pure RL), the reward function needs periodic audits against that principle, not just against "does the code run." Every constant should either be actively used AND consistent with the vision, or removed.
+
+**Framing for paper:** this is a maintenance discipline story worth mentioning as a lesson. The pattern "grep for dead code, then check alignment of live code against stated design principle" is generalizable — reward functions in research RL codebases drift toward complexity because shaping seems to help; the countervailing pressure is periodic honest audits.
+
+---
+
+### 2026-08-18: dialogue-rescue useless-match frame dumper
+
+**Motivation:** PPO_44 session (~4h, ongoing during audit) exhibited a new failure mode not caught by existing safety nets. From ~step 47178 for hundreds of consecutive rescue-check cycles, the dialogue-rescue template matched at pixel (865, 636) with confidence 0.98, clicked, but HUD state never changed (pollen stayed at 41%, honey at 10,223,102 for over 30 minutes). Bot was stuck in some UI element that visually resembled the "click to continue" template pattern well enough to score 0.98, but the clicks weren't advancing the state.
+
+**Why the existing safety nets didn't catch it:**
+- Existing `_consecutive_failed_rescues` counter only increments on template MISMATCHES (below 0.65 confidence). Matches at 0.98 count as SUCCESS, resetting the counter.
+- Stuck-frame dumper triggers off the failed-rescue counter — so this class of "match-but-useless" stuck loop never triggered a frame save.
+- Rescue tier system (SOFT give-up at 30, HARD at 100) similarly gated on failed-rescue counter. Never fired.
+
+**Fix:** added a parallel `_consecutive_useless_matches` counter that increments when a rescue matches + clicks but the HUD (honey, pollen) is unchanged from the previous rescue's HUD snapshot. Frames dumped at log-spaced counts {5, 15, 40, 100, 250} with filename prefix `useless_match_` to distinguish from template-miss dumps. Filename includes the click position and match confidence so the user can identify which UI element is producing the false-positive match and either snip a proper template for it or route around it.
+
+Counter resets whenever HUD state actually changes (bot escaped the loop).
+
+**Result:** deferred (needs to be tested next time this failure mode recurs).
+
+**Learning — publishable pattern:** safety nets in agentic RL systems tend to be defined around what they've CAUGHT. When a new failure mode appears — especially one that looks superficially like success (template matched! click fired!) — the existing counters silently misclassify it. Defense-in-depth for LLM/RL agents needs at least two orthogonal signals for "the intervention actually worked" (match confidence AND state change), not just one.
+
+---
+
 ## Open questions / to-investigate
 
 - Would RecurrentPPO (LSTM-in-PPO from sb3_contrib) help with temporal action smoothing and hive identification?
