@@ -104,12 +104,22 @@ class MetricsHistoryCallback(BaseCallback):
     summary can show trajectory (first / best / worst / last) instead of
     just the final iteration's snapshot.
 
-    SB3 logs each iteration to `logger.name_to_value` before the next
-    rollout starts. We capture the values right after PPO's train step
-    completes (on_rollout_end fires after `.train()`).
+    Timing gotcha: SB3's actual sequence is
+      1. collect_rollouts() → _on_rollout_end fires HERE
+      2. _dump_logs() → records rollout/ep_rew_mean, prints table, CLEARS name_to_value
+      3. train() → records train/* to name_to_value
 
-    History entries: {iter, ep_rew_mean, explained_variance, value_loss}.
-    Kept in memory only — SB3's TensorBoard logs are the durable record.
+    So at _on_rollout_end time, name_to_value has THIS iteration's rollout
+    stats not yet recorded, AND the PREVIOUS iteration's train stats (which
+    are still there because _dump_logs hasn't cleared them yet).
+
+    Result: reading rollout/ep_rew_mean from name_to_value always returns
+    None (silent failure — was blank in the summary all this time).
+    Reading train/* returns the PREVIOUS iteration's values (close enough
+    to right; off by one).
+
+    Fix: compute ep_rew_mean directly from model.ep_info_buffer (same buffer
+    SB3 reads in _dump_logs). For train/*, name_to_value carry-over is fine.
     """
     def __init__(self, verbose=0):
         super().__init__(verbose)
@@ -119,12 +129,21 @@ class MetricsHistoryCallback(BaseCallback):
         return True
 
     def _on_rollout_end(self):
-        # Pull the latest logged values (SB3 populates them before train()
-        # is called, and train() runs before _on_rollout_end fires).
         d = self.model.logger.name_to_value
+        # ep_rew_mean: compute from ep_info_buffer directly, matching what
+        # SB3's own _dump_logs does when it later records rollout/ep_rew_mean.
+        ep_rew_mean = None
+        try:
+            buf = self.model.ep_info_buffer
+            if buf is not None and len(buf) > 0:
+                import numpy as np
+                ep_rew_mean = float(np.mean([ep["r"] for ep in buf]))
+        except Exception:
+            pass   # non-fatal; just leaves ep_rew_mean as None for this iter
+
         self.history.append({
             "iter": len(self.history) + 1,
-            "ep_rew_mean": d.get("rollout/ep_rew_mean"),
+            "ep_rew_mean": ep_rew_mean,
             "explained_variance": d.get("train/explained_variance"),
             "value_loss": d.get("train/value_loss"),
         })
