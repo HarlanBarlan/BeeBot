@@ -539,13 +539,34 @@ class BSSEnv(gym.Env):
             self._last_seen_pollen = current_pollen
 
         if state_changed or self._stalled_since_step is None:
+            # Screen changed (honey or pollen moved) — reset stall clock AND
+            # the failure counter. If the bot escaped whatever novel UI it
+            # was stuck in, rescue can resume fresh next time.
+            if state_changed and self._consecutive_failed_rescues >= 100:
+                print(f"[env t={self._step_count}] state changed after "
+                      f"{self._consecutive_failed_rescues} failed rescues — "
+                      f"resuming rescue attempts (bot appears to have escaped).")
+                self._consecutive_failed_rescues = 0
             self._stalled_since_step = self._step_count
-        elif (self._step_count - self._stalled_since_step > STALL_STEPS_BEFORE_DIALOGUE_CLICK
-              and self._step_count - self._last_rescue_click_step > DIALOGUE_CLICK_INTERVAL_STEPS
-              and self._region is not None
-              and not self._paused):
-            self._try_dialogue_rescue_click(obs=None)
-            self._last_rescue_click_step = self._step_count
+        else:
+            # Tiered back-off. After 30 failures we've printed "GIVING UP"
+            # (see _try_dialogue_rescue_click). After 100, stop calling the
+            # rescue entirely until state_changed above resets the counter.
+            # A shop/novel UI won't respond to blind clicks; polling every
+            # 500 steps still wastes CPU and pollutes logs during a stall
+            # that could last hours.
+            if self._consecutive_failed_rescues >= 100:
+                pass   # hard give-up; state_changed will re-enable
+            else:
+                rescue_interval = DIALOGUE_CLICK_INTERVAL_STEPS
+                if self._consecutive_failed_rescues >= 30:
+                    rescue_interval = 500   # ~100s at 5fps between 30 and 100
+                if (self._step_count - self._stalled_since_step > STALL_STEPS_BEFORE_DIALOGUE_CLICK
+                      and self._step_count - self._last_rescue_click_step > rescue_interval
+                      and self._region is not None
+                      and not self._paused):
+                    self._try_dialogue_rescue_click(obs=None)
+                    self._last_rescue_click_step = self._step_count
 
         # Periodic human-readable status so you can see progress at a glance
         self._step_count += 1
@@ -1136,9 +1157,19 @@ class BSSEnv(gym.Env):
                 except Exception as e:
                     print(f"[env] failed to save unknown-dialogue frame: {e}")
 
-            # After 5 consecutive failures, try blind clicks at recently-
-            # working positions (menu-close buttons, dialogue continue, etc)
-            if (self._consecutive_failed_rescues >= 5
+            # Blind rescue window: [5, 30) consecutive failures.
+            # Below 5: skip — false stall detections, don't intervene.
+            # 5-30: try blind clicks at recently-successful positions.
+            # 30+: STOP intervening — if 30 blind-click attempts haven't
+            #      cleared the stall, we're probably in a shop or novel UI
+            #      the rescue can't handle. Continued blind-clicking is
+            #      actively harmful there (could trigger purchases, and
+            #      teleporting the mouse interferes with the bot's own
+            #      policy trying to escape). Let the policy handle it.
+            #      Reward pressure (bag full → no growth) is the training
+            #      signal that should push it to try new actions.
+            RESCUE_GIVEUP_AT = 30
+            if (5 <= self._consecutive_failed_rescues < RESCUE_GIVEUP_AT
                     and self._rescue_positions_seen):
                 # Try last few known-good positions in reverse order
                 for cx, cy in self._rescue_positions_seen[-3:]:
@@ -1159,6 +1190,20 @@ class BSSEnv(gym.Env):
                 print(f"[env t={self._step_count}] BLIND rescue — clicked at "
                       f"{self._rescue_positions_seen[-3:]} (no template match "
                       f"but stall persistent). Also suppressed E.")
+            elif self._consecutive_failed_rescues == RESCUE_GIVEUP_AT:
+                # One-shot notice on the transition to soft give-up. Rescue
+                # will still poll at a slow cadence (500 steps ≈ 100s) in
+                # case the situation changes visually.
+                print(f"[env t={self._step_count}] dialogue-rescue SOFT give-up "
+                      f"after {RESCUE_GIVEUP_AT} failed blind rescues. "
+                      f"Backing off to 100s polling. Probably a shop or novel UI; "
+                      f"letting policy handle it via reward pressure.")
+            elif self._consecutive_failed_rescues == 100:
+                # Hard give-up. Caller (env.step) will stop even polling
+                # until HUD state changes.
+                print(f"[env t={self._step_count}] dialogue-rescue HARD give-up "
+                      f"after 100 failed rescues. Silencing entirely until "
+                      f"honey or pollen changes (indicating bot escaped).")
             return
 
         x, y = best_loc

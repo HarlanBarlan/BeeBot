@@ -95,6 +95,19 @@ class MilestoneTracker:
         (800.0, 1200.0),       # 1000x expansion
     ]
 
+    # Absolute-jump cap for baseline updates. Ratio check only catches
+    # exact 10x/100x/1000x patterns; unusual OCR errors (~2-7x digit-drops)
+    # slip past and can poison the baseline high. New reads that jump more
+    # than this factor of the current baseline (in either direction) get
+    # quarantined and require N consecutive same-direction reads to accept
+    # (session-hop / real spending events still work, just with a delay).
+    MAX_BASELINE_JUMP_FACTOR = 2.0
+    # 60 = ~12s at 5fps. Real session-hop / spending events resolve almost
+    # instantly (one new balance reading, then flat), so any sequence of
+    # 60 consistent readings almost has to be real. Meanwhile a burst of
+    # 60 identical misreads has essentially never been observed.
+    JUMP_CONFIRMATION_READS = 60
+
     def __init__(self):
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         JSONL_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -105,24 +118,17 @@ class MilestoneTracker:
         self._fired = set()
         # For each pending honey threshold, track how many consecutive
         # reads have exceeded it. Fires only after N consecutive confirmations.
-        # Keyed by threshold value: {5_000_000: 3, 10_000_000: 1, ...}.
-        # Any read that falls below a threshold resets its counter to 0.
         self._honey_confirmations = {}
-        # Rolling buffer of recent ratio-filtered honey reads. Median of
-        # this buffer is what threshold checks use — robust to individual
-        # misreads that slip past the ratio filter (digit-drop errors,
-        # unusual OCR patterns) as long as they're a minority of recent reads.
+        # Rolling median buffer of ratio-and-jump-filtered reads.
         self._honey_reads = []
-        # Last-seen honey reading, for decimal-shift ratio comparison.
-        # Persisted across sessions so Layer 1 protection is live from
-        # read 1 of every future run. Without persistence, the FIRST HUD
-        # read of a fresh session unconditionally sets the baseline — if
-        # that first read is an OCR decimal-shift misread, all subsequent
-        # correct reads get rejected as "shifts" and the misreads climb
-        # the confirmation counter, false-firing every threshold up to
-        # the shifted value (this is exactly what happened on 2026-08-17
-        # when 10M/25M/50M all fired at step 308 with Fredrick at ~7.47M).
+        # Last-seen honey — persisted across sessions so Layer 1 protection
+        # is live from read 1 of every future run.
         self._last_seen_honey = None
+        # Same-direction jump counters (mirrors reward.py's outlier pattern).
+        # Bumped when a big jump is rejected; if same direction hits N in a
+        # row, accept as real (session-hop / spending event).
+        self._consecutive_pos_jumps = 0
+        self._consecutive_neg_jumps = 0
         if STATE_PATH.exists():
             try:
                 data = json.loads(STATE_PATH.read_text())
@@ -131,6 +137,25 @@ class MilestoneTracker:
             except (json.JSONDecodeError, IOError):
                 # Corrupt state file — start fresh rather than crash training
                 self._fired = set()
+        # Self-heal false-fired honey thresholds. If a threshold is in
+        # `_fired` but the persisted last_seen_honey is below half that
+        # threshold, the fire was almost certainly bogus (OCR poisoning) —
+        # remove it so the tracker can honestly re-fire when honey actually
+        # crosses. Real honey balance can't drop from >T to <T/2 without a
+        # user-visible catastrophic spending event.
+        if self._last_seen_honey is not None:
+            cleaned = []
+            for key in list(self._fired):
+                if not key.startswith("honey_"):
+                    continue
+                threshold = int(key.split("_")[1])
+                if self._last_seen_honey < threshold * 0.5:
+                    self._fired.discard(key)
+                    cleaned.append(key)
+            if cleaned:
+                print(f"[milestone] auto-cleaned bogus fires (last_seen_honey "
+                      f"{self._last_seen_honey:,.0f} < half of): {cleaned}")
+                self._persist()
 
     def _persist(self):
         try:
@@ -173,11 +198,35 @@ class MilestoneTracker:
         """
         if honey is None:
             return
-        # Layer 1: decimal-shift ratio rejection.
+        # Layer 1a: decimal-shift ratio rejection (10x/100x/1000x patterns).
         if self._last_seen_honey is not None and self._last_seen_honey > 0:
             ratio = honey / self._last_seen_honey
             if any(low <= ratio <= high for low, high in self.DECIMAL_SHIFT_RATIOS):
                 return
+
+            # Layer 1b: absolute-jump cap. Catches non-decimal-shift misreads
+            # (~2-7x digit-drops) that would otherwise poison the baseline.
+            # Real honey never grows 2x in a single read. Session-hop /
+            # spending events still work — they just need JUMP_CONFIRMATION_READS
+            # consecutive same-direction reads before we accept the new baseline.
+            if ratio > self.MAX_BASELINE_JUMP_FACTOR:
+                self._consecutive_pos_jumps += 1
+                self._consecutive_neg_jumps = 0
+                if self._consecutive_pos_jumps < self.JUMP_CONFIRMATION_READS:
+                    return  # quarantine
+                # Confirmed real jump — accept and reset counter.
+                self._consecutive_pos_jumps = 0
+            elif ratio < (1.0 / self.MAX_BASELINE_JUMP_FACTOR):
+                self._consecutive_neg_jumps += 1
+                self._consecutive_pos_jumps = 0
+                if self._consecutive_neg_jumps < self.JUMP_CONFIRMATION_READS:
+                    return
+                self._consecutive_neg_jumps = 0
+            else:
+                # Normal-range read — reset both counters.
+                self._consecutive_pos_jumps = 0
+                self._consecutive_neg_jumps = 0
+
         # Update baseline + persist on meaningful movement.
         prev = self._last_seen_honey
         self._last_seen_honey = honey
